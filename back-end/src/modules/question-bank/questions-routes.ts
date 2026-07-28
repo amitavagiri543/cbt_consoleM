@@ -5,12 +5,10 @@ import { db } from "../../database/db.js";
 import {
     answers,
     examQuestions,
-    exams,
-    examSections,
     questionOptions,
     questions,
     questionTags,
-    questionVersions,
+    questionVersions
 } from "../../database/schemas/index.js";
 import { requireRole } from "../../middleware/rbac.js";
 
@@ -158,21 +156,21 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  // Section-wise view: returns questions grouped by exam sections
+  // Section-wise view: returns questions grouped by their sectionName (Excel tab name)
   app.get(
     "/section-wise",
     { preHandler: requireRole("super_admin", "exam_admin", "question_author") },
     async (request) => {
-      const { subjectId, batchId } = request.query as {
+      const { subjectId } = request.query as {
         subjectId?: string;
         batchId?: string;
       };
-      if (!subjectId || !batchId)
+      if (!subjectId)
         return {
-          error: "subjectId and batchId are required",
+          error: "subjectId is required",
         };
 
-      // Get ALL questions for this subject (these are the pool of questions)
+      // Get ALL questions for this subject
       const allSubjectQuestions = await db
         .select()
         .from(questions)
@@ -180,51 +178,6 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
         .orderBy(desc(questions.createdAt));
 
       const allQIds = new Set(allSubjectQuestions.map((q) => q.id));
-
-      // Get all exams in this batch
-      const batchExams = await db
-        .select({ id: exams.id, name: exams.name })
-        .from(exams)
-        .where(eq(exams.batchId, batchId));
-
-      const examIds = batchExams.map((e) => e.id);
-      const examMap = new Map(batchExams.map((e) => [e.id, e.name]));
-
-      // Get all sections for these exams (may be empty if no exams/sections)
-      let allSections: (typeof examSections.$inferSelect)[] = [];
-      if (examIds.length > 0) {
-        allSections = await db
-          .select()
-          .from(examSections)
-          .where(inArray(examSections.examId, examIds))
-          .orderBy(asc(examSections.sectionOrder));
-      }
-
-      const sectionIds = allSections.map((s) => s.id);
-
-      // Get all exam_questions for these sections
-      let eqRows: {
-        eqId: string;
-        examSectionId: string;
-        questionId: string;
-        displayOrder: number;
-      }[] = [];
-      if (sectionIds.length > 0) {
-        eqRows = await db
-          .select({
-            eqId: examQuestions.id,
-            examSectionId: examQuestions.examSectionId,
-            questionId: examQuestions.questionId,
-            displayOrder: examQuestions.displayOrder,
-          })
-          .from(examQuestions)
-          .where(inArray(examQuestions.examSectionId, sectionIds))
-          .orderBy(asc(examQuestions.displayOrder));
-      }
-
-      // Only keep exam_questions that reference questions in our subject
-      const eqInSubject = eqRows.filter((r) => allQIds.has(r.questionId));
-      const assignedQIds = new Set(eqInSubject.map((r) => r.questionId));
 
       // Fetch options and tags for ALL subject questions
       const [allOptions, allTags] =
@@ -259,44 +212,33 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
         tagsMap.set(t.questionId, arr);
       }
 
-      const qMap = new Map(allSubjectQuestions.map((q) => [q.id, q]));
+      // Group questions by sectionName
+      const sectionMap = new Map<string, typeof allSubjectQuestions>();
+      const unassigned: typeof allSubjectQuestions = [];
 
-      // Build section groups (only sections that have questions from this subject)
-      const sectionsWithQuestions = allSections
-        .map((section) => {
-          const sectionEqRows = eqInSubject.filter(
-            (r) => r.examSectionId === section.id,
-          );
-          const sectionQuestions = sectionEqRows.map((r) => {
-            const q = qMap.get(r.questionId)!;
-            return {
-              ...q,
-              options: optionsMap.get(q.id) ?? [],
-              tags: tagsMap.get(q.id) ?? [],
-              examQuestionId: r.eqId,
-              displayOrder: r.displayOrder,
-            };
-          });
-          return {
-            ...section,
-            examName: examMap.get(section.examId) ?? "",
-            questions: sectionQuestions,
-          };
-        })
-        .filter((s) => s.questions.length > 0);
-
-      // Unassigned: all subject questions NOT in any exam section for this batch
-      const unassignedQuestions = allSubjectQuestions
-        .filter((q) => !assignedQIds.has(q.id))
-        .map((q) => ({
+      for (const q of allSubjectQuestions) {
+        const enriched = {
           ...q,
           options: optionsMap.get(q.id) ?? [],
           tags: tagsMap.get(q.id) ?? [],
-        }));
+        };
+        if (q.sectionName) {
+          const arr = sectionMap.get(q.sectionName) ?? [];
+          arr.push(enriched);
+          sectionMap.set(q.sectionName, arr);
+        } else {
+          unassigned.push(enriched);
+        }
+      }
+
+      const sections = [...sectionMap.entries()].map(([name, qs]) => ({
+        name,
+        questions: qs,
+      }));
 
       return {
-        sections: sectionsWithQuestions,
-        unassigned: unassignedQuestions,
+        sections,
+        unassigned,
       };
     },
   );

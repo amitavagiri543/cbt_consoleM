@@ -749,6 +749,7 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
                   type: type as "mcq_single",
                   contentJson: content,
                   solutionJson: solution,
+                  sectionName: sheetName,
                   createdBy: request.user.sub,
                 },
                 options: opts.map((o) => ({
@@ -1209,6 +1210,7 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
                   contentJson: content,
                   mediaUrlsJson: mediaUrls.length > 0 ? mediaUrls : null,
                   solutionJson: solution,
+                  sectionName: sheetName,
                   createdBy: request.user.sub,
                 },
                 options: opts.map((o) => ({

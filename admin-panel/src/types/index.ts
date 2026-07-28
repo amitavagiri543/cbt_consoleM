@@ -113,6 +113,7 @@ export interface Question {
   contentJson: Record<string, unknown>;
   mediaUrlsJson?: string[] | null;
   solutionJson?: Record<string, unknown> | null;
+  sectionName?: string | null;
   version: number;
   createdBy: string;
   usageCount: number;

@@ -83,15 +83,8 @@ function SectionWiseView({
 }: {
   data?: {
     sections: {
-      id: string;
-      examId: string;
-      examName: string;
       name: string;
-      sectionOrder: number;
-      questions: (Question & {
-        examQuestionId: string;
-        displayOrder: number;
-      })[];
+      questions: Question[];
     }[];
     unassigned: Question[];
   };
@@ -111,7 +104,8 @@ function SectionWiseView({
   if (!data || (data.sections.length === 0 && data.unassigned.length === 0)) {
     return (
       <div className="rounded-md border border-border p-8 text-center text-muted-foreground">
-        No questions found in any exam sections for this batch.
+        No questions found. Upload questions with Excel tabs to see section-wise
+        grouping.
       </div>
     );
   }
@@ -120,15 +114,11 @@ function SectionWiseView({
     <div className="space-y-4">
       {data.sections.map((section) => (
         <div
-          key={section.id}
+          key={section.name}
           className="rounded-md border border-border overflow-hidden"
         >
           <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-sm">{section.examName}</span>
-              <span className="text-muted-foreground">/</span>
-              <span className="font-medium text-sm">{section.name}</span>
-            </div>
+            <span className="font-semibold text-sm">{section.name}</span>
             <Badge variant="secondary" className="text-xs">
               {section.questions.length} question(s)
             </Badge>
@@ -213,7 +203,9 @@ function SectionWiseView({
       {data.unassigned.length > 0 && (
         <div className="rounded-md border border-border overflow-hidden">
           <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
-            <span className="font-medium text-sm">Unassigned Questions</span>
+            <span className="font-medium text-sm">
+              Questions without a section
+            </span>
             <Badge variant="secondary" className="text-xs">
               {data.unassigned.length} question(s)
             </Badge>
@@ -398,14 +390,8 @@ export default function QuestionsPage({
       batchId,
     ],
     queryFn: () =>
-      questionsService.sectionWise(
-        propSubjectId || filters.subjectId,
-        batchId!,
-      ),
-    enabled:
-      viewMode === "section" &&
-      !!batchId &&
-      !!(propSubjectId || filters.subjectId),
+      questionsService.sectionWise(propSubjectId || filters.subjectId, batchId),
+    enabled: viewMode === "section" && !!(propSubjectId || filters.subjectId),
   });
 
   const createMutation = useMutation({
@@ -815,7 +801,7 @@ export default function QuestionsPage({
               className="pl-9 h-9 text-xs"
             />
           </div>
-          {batchId && (propSubjectId || filters.subjectId) && (
+          {(propSubjectId || filters.subjectId) && (
             <div className="flex rounded-md border border-input overflow-hidden">
               <button
                 className={cn(
@@ -965,7 +951,7 @@ export default function QuestionsPage({
         </div>
       </div>
 
-      {viewMode === "section" && batchId ? (
+      {viewMode === "section" ? (
         <SectionWiseView
           data={sectionData}
           loading={sectionLoading}

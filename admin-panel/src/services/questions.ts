@@ -29,20 +29,13 @@ export const questionsService = {
   bulkDelete: (ids: string[]) =>
     api.delete<unknown, { message: string }>(`/questions`, { data: { ids } }),
 
-  sectionWise: (subjectId: string, batchId: string) =>
+  sectionWise: (subjectId: string, batchId?: string) =>
     api.get<
       unknown,
       {
         sections: {
-          id: string;
-          examId: string;
-          examName: string;
           name: string;
-          sectionOrder: number;
-          questions: (Question & {
-            examQuestionId: string;
-            displayOrder: number;
-          })[];
+          questions: Question[];
         }[];
         unassigned: Question[];
       }

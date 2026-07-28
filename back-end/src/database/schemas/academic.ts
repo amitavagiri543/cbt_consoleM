@@ -93,6 +93,7 @@ export const questions = pgTable(
     contentJson: jsonb("content_json").notNull(),
     mediaUrlsJson: jsonb("media_urls_json"),
     solutionJson: jsonb("solution_json"),
+    sectionName: varchar("section_name", { length: 255 }),
     version: integer("version").notNull().default(1),
     createdBy: uuid("created_by")
       .notNull()
