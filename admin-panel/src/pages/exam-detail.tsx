@@ -16,7 +16,7 @@ import { Label } from "../components/ui/label";
 import { examsService } from "../services/exams";
 import { subjectsService } from "../services/subjects";
 import { useUIStore } from "../stores/ui-store";
-import type { Exam, ExamQuestionRef, ExamSection } from "../types";
+import type { Exam } from "../types";
 
 function getQuestionText(contentJson: unknown): string {
   if (!contentJson || typeof contentJson !== "object") return "";
@@ -72,11 +72,11 @@ export default function ExamDetailPage() {
     },
   });
 
-  const sections = exam?.sections ?? [];
-  const totalQuestions = sections.reduce(
-    (sum, s) => sum + (s.questions?.length ?? 0),
-    0,
-  );
+  const subjectQuestionGroups = exam?.subjectQuestionGroups ?? [];
+  const unassignedSubjectQuestions = exam?.unassignedSubjectQuestions ?? [];
+  const totalQuestions =
+    subjectQuestionGroups.reduce((sum, g) => sum + g.questions.length, 0) +
+    unassignedSubjectQuestions.length;
 
   useEffect(() => {
     if (!exam) return;
@@ -230,46 +230,31 @@ export default function ExamDetailPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Sections */}
-      {sections.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
-          No sections or questions added to this exam yet.
-        </div>
-      ) : (
+      {/* Subject Questions Grouped by Section Name (from Excel tabs) */}
+      {subjectQuestionGroups.length > 0 && (
         <div className="space-y-6">
-          {sections.map((section: ExamSection, idx) => (
-            <div key={section.id} className="rounded-lg border">
-              {/* Section header */}
+          {subjectQuestionGroups.map((group) => (
+            <div key={group.name} className="rounded-lg border">
               <div className="border-b bg-muted/50 px-5 py-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-semibold">
-                      Section {idx + 1}: {section.name}
-                    </h3>
+                    <h3 className="font-semibold">{group.name}</h3>
                     <p className="text-xs text-muted-foreground">
-                      {section.questions?.length ?? 0} questions
-                      {section.durationMinutes
-                        ? ` • ${section.durationMinutes} min`
-                        : ""}
-                      {section.totalMarks
-                        ? ` • ${section.totalMarks} marks`
-                        : ""}
+                      {group.questions.length} questions
                     </p>
                   </div>
                 </div>
               </div>
-
-              {/* Questions */}
               <div className="divide-y">
-                {(section.questions ?? []).map((q: ExamQuestionRef, qIdx) => {
+                {group.questions.map((q, qIdx) => {
                   const options = q.options ?? [];
                   const showOptions = [
                     "mcq_single",
                     "mcq_multiple",
                     "true_false",
-                  ].includes(q.type ?? "");
+                  ].includes(q.type);
                   return (
-                    <div key={q.id ?? qIdx} className="px-5 py-4">
+                    <div key={q.id} className="px-5 py-4">
                       <div className="flex items-start gap-3">
                         <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
                           {qIdx + 1}
@@ -280,7 +265,7 @@ export default function ExamDetailPage() {
                               variant="outline"
                               className="capitalize text-xs"
                             >
-                              {q.type ?? "question"}
+                              {q.type}
                             </Badge>
                           </div>
                           <p className="text-sm">
@@ -310,16 +295,79 @@ export default function ExamDetailPage() {
                     </div>
                   );
                 })}
-                {(section.questions?.length ?? 0) === 0 && (
-                  <div className="px-5 py-4 text-center text-sm text-muted-foreground">
-                    No questions in this section.
-                  </div>
-                )}
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Unassigned Subject Questions */}
+      {unassignedSubjectQuestions.length > 0 && (
+        <div className="rounded-lg border">
+          <div className="border-b bg-muted/50 px-5 py-3">
+            <h3 className="font-semibold">Questions without a section</h3>
+            <p className="text-xs text-muted-foreground">
+              {unassignedSubjectQuestions.length} questions
+            </p>
+          </div>
+          <div className="divide-y">
+            {unassignedSubjectQuestions.map((q, qIdx) => {
+              const options = q.options ?? [];
+              const showOptions = [
+                "mcq_single",
+                "mcq_multiple",
+                "true_false",
+              ].includes(q.type);
+              return (
+                <div key={q.id} className="px-5 py-4">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+                      {qIdx + 1}
+                    </span>
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="capitalize text-xs">
+                          {q.type}
+                        </Badge>
+                      </div>
+                      <p className="text-sm">
+                        {getQuestionText(q.contentJson) || (
+                          <span className="text-muted-foreground italic">
+                            Question content unavailable
+                          </span>
+                        )}
+                      </p>
+                      {showOptions && options.length > 0 && (
+                        <ul className="ml-4 space-y-1">
+                          {options.map((opt, oIdx) => (
+                            <li
+                              key={oIdx}
+                              className={`text-sm ${opt.isCorrect ? "text-green-600 dark:text-green-400 font-medium" : "text-muted-foreground"}`}
+                            >
+                              <span className="mr-2 font-medium">
+                                {String.fromCharCode(65 + oIdx)}.
+                              </span>
+                              {opt.optionText}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {subjectQuestionGroups.length === 0 &&
+        unassignedSubjectQuestions.length === 0 && (
+          <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
+            No sections or questions added to this exam yet.
+          </div>
+        )}
     </div>
   );
 }

@@ -248,6 +248,29 @@ export interface Exam {
   createdAt: string;
   updatedAt: string;
   sections?: ExamSection[];
+  subjectQuestionGroups?: {
+    name: string;
+    questions: {
+      id: string;
+      type: string;
+      contentJson: unknown;
+      options?: {
+        optionText: string;
+        isCorrect: boolean;
+        displayOrder: number;
+      }[];
+    }[];
+  }[];
+  unassignedSubjectQuestions?: {
+    id: string;
+    type: string;
+    contentJson: unknown;
+    options?: {
+      optionText: string;
+      isCorrect: boolean;
+      displayOrder: number;
+    }[];
+  }[];
   subjectName?: string | null;
   batchName?: string | null;
   institutionName?: string | null;

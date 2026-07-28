@@ -1,17 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-    flexRender,
-    getCoreRowModel,
-    getPaginationRowModel,
-    getSortedRowModel,
-    useReactTable,
-    type ColumnDef,
-    type SortingState,
-} from "@tanstack/react-table";
-import {
     ArrowLeft,
-    ChevronLeft,
-    ChevronRight,
     ClipboardList,
     Download,
     Loader2,
@@ -20,7 +9,7 @@ import {
     Search,
     Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -41,7 +30,6 @@ import {
     TableHeader,
     TableRow,
 } from "../components/ui/table";
-import { cn } from "../lib/utils";
 import { examsService } from "../services/exams";
 import { questionsService } from "../services/questions";
 import { subjectsService } from "../services/subjects";
@@ -80,6 +68,10 @@ function SectionWiseView({
   typeLabels,
   onEdit,
   onDelete,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
+  onBulkDelete,
 }: {
   data?: {
     sections: {
@@ -92,6 +84,10 @@ function SectionWiseView({
   typeLabels: Record<QuestionType, string>;
   onEdit: (q: Question) => void;
   onDelete: (id: string) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onToggleSelectAll: (ids: string[], checked: boolean) => void;
+  onBulkDelete: () => void;
 }) {
   if (loading) {
     return (
@@ -110,102 +106,172 @@ function SectionWiseView({
     );
   }
 
+  const allQuestionIds = [
+    ...data.sections.flatMap((s) => s.questions.map((q) => q.id)),
+    ...data.unassigned.map((q) => q.id),
+  ];
+  const allSelected =
+    allQuestionIds.length > 0 &&
+    allQuestionIds.every((id) => selectedIds.has(id));
+  const someSelected = allQuestionIds.some((id) => selectedIds.has(id));
+
+  const renderQuestionRow = (q: Question, i: number) => {
+    const contentText = (q.contentJson?.text as string) ?? "";
+    return (
+      <TableRow key={q.id}>
+        <TableCell className="w-10">
+          <input
+            type="checkbox"
+            checked={selectedIds.has(q.id)}
+            onChange={() => onToggleSelect(q.id)}
+            className="h-4 w-4 rounded border-input"
+          />
+        </TableCell>
+        <TableCell className="text-xs text-muted-foreground w-8">
+          {i + 1}
+        </TableCell>
+        <TableCell className="max-w-md">
+          <p className="text-sm line-clamp-2">{contentText}</p>
+          {q.options && q.options.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">
+              {q.options.length} option(s)
+            </p>
+          )}
+        </TableCell>
+        <TableCell>
+          <Badge variant="outline" className="text-xs">
+            {typeLabels[q.type] ?? q.type}
+          </Badge>
+        </TableCell>
+        <TableCell>
+          <div className="flex flex-wrap gap-1">
+            {(q.tags ?? []).slice(0, 2).map((tag) => (
+              <Badge key={tag} variant="secondary" className="text-xs">
+                {tag}
+              </Badge>
+            ))}
+            {(q.tags ?? []).length > 2 && (
+              <span className="text-xs text-muted-foreground">
+                +{(q.tags ?? []).length - 2}
+              </span>
+            )}
+          </div>
+        </TableCell>
+        <TableCell>
+          <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onEdit(q)}
+              title="Edit"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDelete(q.id)}
+              title="Delete"
+            >
+              <Trash2 className="h-4 w-4 text-red-600" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  };
+
+  const sectionCheckboxHeader = (ids: string[]) => {
+    const allSectionSelected =
+      ids.length > 0 && ids.every((id) => selectedIds.has(id));
+    return (
+      <input
+        type="checkbox"
+        checked={allSectionSelected}
+        onChange={(e) => onToggleSelectAll(ids, e.target.checked)}
+        className="h-4 w-4 rounded border-input"
+      />
+    );
+  };
+
   return (
     <div className="space-y-4">
-      {data.sections.map((section) => (
-        <div
-          key={section.name}
-          className="rounded-md border border-border overflow-hidden"
-        >
-          <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
-            <span className="font-semibold text-sm">{section.name}</span>
-            <Badge variant="secondary" className="text-xs">
-              {section.questions.length} question(s)
-            </Badge>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10">#</TableHead>
-                <TableHead>Question</TableHead>
-                <TableHead className="w-32">Type</TableHead>
-                <TableHead className="w-32">Tags</TableHead>
-                <TableHead className="w-24">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {section.questions.map((q, i) => {
-                const contentText = (q.contentJson?.text as string) ?? "";
-                return (
-                  <TableRow key={q.id}>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {i + 1}
-                    </TableCell>
-                    <TableCell className="max-w-md">
-                      <p className="text-sm line-clamp-2">{contentText}</p>
-                      {q.options && q.options.length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {q.options.length} option(s)
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {typeLabels[q.type] ?? q.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {(q.tags ?? []).slice(0, 2).map((tag) => (
-                          <Badge
-                            key={tag}
-                            variant="secondary"
-                            className="text-xs"
-                          >
-                            {tag}
-                          </Badge>
-                        ))}
-                        {(q.tags ?? []).length > 2 && (
-                          <span className="text-xs text-muted-foreground">
-                            +{(q.tags ?? []).length - 2}
-                          </span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onEdit(q)}
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onDelete(q.id)}
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4 text-red-600" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-2.5">
+          <span className="text-sm font-medium text-red-700">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={onBulkDelete}
+            className="ml-auto"
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            Delete Selected ({selectedIds.size})
+          </Button>
         </div>
-      ))}
+      )}
+
+      <div className="flex items-center gap-2 px-1">
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = someSelected && !allSelected;
+          }}
+          onChange={(e) => onToggleSelectAll(allQuestionIds, e.target.checked)}
+          className="h-4 w-4 rounded border-input"
+        />
+        <span className="text-xs text-muted-foreground">
+          Select all ({allQuestionIds.length})
+        </span>
+      </div>
+
+      {data.sections.map((section) => {
+        const sectionIds = section.questions.map((q) => q.id);
+        return (
+          <div
+            key={section.name}
+            className="rounded-md border border-border overflow-hidden"
+          >
+            <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {sectionCheckboxHeader(sectionIds)}
+                <span className="font-semibold text-sm">{section.name}</span>
+              </div>
+              <Badge variant="secondary" className="text-xs">
+                {section.questions.length} question(s)
+              </Badge>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10"></TableHead>
+                  <TableHead className="w-8">#</TableHead>
+                  <TableHead>Question</TableHead>
+                  <TableHead className="w-32">Type</TableHead>
+                  <TableHead className="w-32">Tags</TableHead>
+                  <TableHead className="w-24">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {section.questions.map((q, i) => renderQuestionRow(q, i))}
+              </TableBody>
+            </Table>
+          </div>
+        );
+      })}
 
       {data.unassigned.length > 0 && (
         <div className="rounded-md border border-border overflow-hidden">
           <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
-            <span className="font-medium text-sm">
-              Questions without a section
-            </span>
+            <div className="flex items-center gap-2">
+              {sectionCheckboxHeader(data.unassigned.map((q) => q.id))}
+              <span className="font-medium text-sm">
+                Questions without a section
+              </span>
+            </div>
             <Badge variant="secondary" className="text-xs">
               {data.unassigned.length} question(s)
             </Badge>
@@ -213,7 +279,8 @@ function SectionWiseView({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10">#</TableHead>
+                <TableHead className="w-10"></TableHead>
+                <TableHead className="w-8">#</TableHead>
                 <TableHead>Question</TableHead>
                 <TableHead className="w-32">Type</TableHead>
                 <TableHead className="w-32">Tags</TableHead>
@@ -221,67 +288,7 @@ function SectionWiseView({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.unassigned.map((q, i) => {
-                const contentText = (q.contentJson?.text as string) ?? "";
-                return (
-                  <TableRow key={q.id}>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {i + 1}
-                    </TableCell>
-                    <TableCell className="max-w-md">
-                      <p className="text-sm line-clamp-2">{contentText}</p>
-                      {q.options && q.options.length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {q.options.length} option(s)
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {typeLabels[q.type] ?? q.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {(q.tags ?? []).slice(0, 2).map((tag) => (
-                          <Badge
-                            key={tag}
-                            variant="secondary"
-                            className="text-xs"
-                          >
-                            {tag}
-                          </Badge>
-                        ))}
-                        {(q.tags ?? []).length > 2 && (
-                          <span className="text-xs text-muted-foreground">
-                            +{(q.tags ?? []).length - 2}
-                          </span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onEdit(q)}
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onDelete(q.id)}
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4 text-red-600" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {data.unassigned.map((q, i) => renderQuestionRow(q, i))}
             </TableBody>
           </Table>
         </div>
@@ -302,15 +309,7 @@ export default function QuestionsPage({
   onBack?: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 });
   const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search), 400);
-    return () => clearTimeout(timer);
-  }, [search]);
   const [filters, setFilters] = useState({
     subjectId: propSubjectId || "",
     type: "",
@@ -341,7 +340,6 @@ export default function QuestionsPage({
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importSubjectId, setImportSubjectId] = useState(propSubjectId || "");
-  const [viewMode, setViewMode] = useState<"flat" | "section">("flat");
   const [createForm, setCreateForm] = useState({
     subjectId: propSubjectId || "",
     type: "mcq_single" as QuestionType,
@@ -362,26 +360,6 @@ export default function QuestionsPage({
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data, isLoading } = useQuery({
-    queryKey: [
-      "questions",
-      pagination.pageIndex,
-      pagination.pageSize,
-      debouncedSearch,
-      filters,
-    ],
-    queryFn: () =>
-      questionsService.list({
-        page: pagination.pageIndex + 1,
-        pageSize: pagination.pageSize,
-        search: debouncedSearch || undefined,
-        subjectId: filters.subjectId || undefined,
-        type: filters.type || undefined,
-      }),
-    placeholderData: (prev) => prev,
-    enabled: viewMode === "flat",
-  });
-
   const { data: sectionData, isLoading: sectionLoading } = useQuery({
     queryKey: [
       "questions",
@@ -391,7 +369,7 @@ export default function QuestionsPage({
     ],
     queryFn: () =>
       questionsService.sectionWise(propSubjectId || filters.subjectId, batchId),
-    enabled: viewMode === "section" && !!(propSubjectId || filters.subjectId),
+    enabled: !!(propSubjectId || filters.subjectId),
   });
 
   const createMutation = useMutation({
@@ -529,9 +507,12 @@ export default function QuestionsPage({
   });
 
   // Bulk Delete States
-  const [rowSelection, setRowSelection] = useState({});
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [sectionSelectedIds, setSectionSelectedIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [sectionBulkDeleteConfirmOpen, setSectionBulkDeleteConfirmOpen] =
+    useState(false);
 
   const openEditDialog = (q: Question) => {
     const content = q.contentJson as Record<string, unknown>;
@@ -642,126 +623,12 @@ export default function QuestionsPage({
     onError: () => toast.error("Import failed"),
   });
 
-  const tableData = useMemo(() => data?.data ?? [], [data]);
-
-  const columns: ColumnDef<Question>[] = [
-    {
-      id: "select",
-      header: ({ table }) => (
-        <input
-          type="checkbox"
-          checked={table.getIsAllPageRowsSelected()}
-          onChange={(e) => table.toggleAllPageRowsSelected(!!e.target.checked)}
-          aria-label="Select all"
-          className="h-4 w-4 rounded border-border bg-background accent-primary cursor-pointer"
-        />
-      ),
-      cell: ({ row }) => (
-        <input
-          type="checkbox"
-          checked={row.getIsSelected()}
-          onChange={(e) => row.toggleSelected(!!e.target.checked)}
-          aria-label="Select row"
-          className="h-4 w-4 rounded border-border bg-background accent-primary cursor-pointer"
-          onClick={(e) => e.stopPropagation()}
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-    },
-    {
-      accessorKey: "contentJson",
-      header: "Question",
-      cell: ({ row }) => {
-        const content = row.getValue("contentJson") as Record<string, unknown>;
-        const text = (content?.text as string) ?? "";
-        const opts = row.original.options ?? [];
-        const showOptions = [
-          "mcq_single",
-          "mcq_multiple",
-          "true_false",
-        ].includes(row.original.type);
-        return (
-          <div className="max-w-md space-y-1">
-            <p className="font-medium">
-              {text.length > 80 ? text.slice(0, 80) + "…" : text}
-            </p>
-            {showOptions && opts.length > 0 && (
-              <ul className="ml-4 space-y-0.5 text-xs text-muted-foreground">
-                {opts.map((o, i) => (
-                  <li
-                    key={i}
-                    className={
-                      o.isCorrect
-                        ? "text-green-600 dark:text-green-400 font-medium"
-                        : ""
-                    }
-                  >
-                    {String.fromCharCode(65 + i)}) {o.optionText}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "type",
-      header: "Type",
-      cell: ({ row }) => {
-        const type = row.getValue("type") as QuestionType;
-        return <Badge variant="outline">{typeLabels[type]}</Badge>;
-      },
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openEditDialog(row.original)}
-            title="Edit"
-          >
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => deleteMutation.mutate(row.original.id)}
-            title="Delete"
-          >
-            <Trash2 className="h-4 w-4 text-red-600" />
-          </Button>
-        </div>
-      ),
-    },
-  ];
-
-  const table = useReactTable({
-    data: tableData,
-    columns,
-    state: { sorting, pagination, rowSelection },
-    onSortingChange: setSorting,
-    onPaginationChange: setPagination,
-    onRowSelectionChange: setRowSelection,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    manualPagination: true,
-    pageCount: data ? Math.ceil(data.total / data.pageSize) : -1,
-  });
-
-  const handleBulkDelete = async () => {
-    const selectedRows = table.getSelectedRowModel().rows;
-    if (selectedRows.length === 0) return;
+  const handleSectionBulkDelete = async () => {
+    if (sectionSelectedIds.size === 0) return;
     setBulkDeleting(true);
-    const selectedIds = selectedRows.map((row) => row.original.id);
-    // Clear selection and close dialog immediately to prevent stale state
-    setRowSelection({});
-    setBulkDeleteConfirmOpen(false);
+    const selectedIds = [...sectionSelectedIds];
+    setSectionSelectedIds(new Set());
+    setSectionBulkDeleteConfirmOpen(false);
     try {
       await questionsService.bulkDelete(selectedIds);
       toast.success(`Successfully deleted ${selectedIds.length} question(s)`);
@@ -796,43 +663,15 @@ export default function QuestionsPage({
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setPagination((p) => ({ ...p, pageIndex: 0 }));
               }}
               className="pl-9 h-9 text-xs"
             />
           </div>
-          {(propSubjectId || filters.subjectId) && (
-            <div className="flex rounded-md border border-input overflow-hidden">
-              <button
-                className={cn(
-                  "px-3 py-1.5 text-xs font-medium transition-colors",
-                  viewMode === "flat"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-transparent hover:bg-accent",
-                )}
-                onClick={() => setViewMode("flat")}
-              >
-                Flat View
-              </button>
-              <button
-                className={cn(
-                  "px-3 py-1.5 text-xs font-medium transition-colors border-l border-input",
-                  viewMode === "section"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-transparent hover:bg-accent",
-                )}
-                onClick={() => setViewMode("section")}
-              >
-                Section View
-              </button>
-            </div>
-          )}
           {!propSubjectId && (
             <select
               value={filters.subjectId}
               onChange={(e) => {
                 setFilters((f) => ({ ...f, subjectId: e.target.value }));
-                setPagination((p) => ({ ...p, pageIndex: 0 }));
               }}
               className="h-9 rounded-md border border-input bg-transparent px-3 text-xs"
             >
@@ -847,17 +686,6 @@ export default function QuestionsPage({
         </div>
 
         <div className="flex items-center gap-2">
-          {table.getSelectedRowModel().rows.length > 0 && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => setBulkDeleteConfirmOpen(true)}
-              className="shadow-sm transition-all animate-in fade-in zoom-in-95 duration-200"
-            >
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              Delete Selected ({table.getSelectedRowModel().rows.length})
-            </Button>
-          )}
           <div className="relative z-20">
             <Button
               variant="outline"
@@ -951,100 +779,31 @@ export default function QuestionsPage({
         </div>
       </div>
 
-      {viewMode === "section" ? (
-        <SectionWiseView
-          data={sectionData}
-          loading={sectionLoading}
-          typeLabels={typeLabels}
-          onEdit={openEditDialog}
-          onDelete={(id) => deleteMutation.mutate(id)}
-        />
-      ) : (
-        <>
-          <div className="rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id}>
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center"
-                    >
-                      <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
-                    </TableCell>
-                  </TableRow>
-                ) : tableData.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center text-muted-foreground"
-                    >
-                      No questions found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id}>
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext(),
-                          )}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              {data ? `${data.total} total questions` : "Loading..."}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => table.previousPage()}
-                disabled={!table.getCanPreviousPage()}
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Previous
-              </Button>
-              <span className="text-sm">
-                Page {pagination.pageIndex + 1}
-                {data ? ` of ${Math.ceil(data.total / data.pageSize)}` : ""}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => table.nextPage()}
-                disabled={!table.getCanNextPage()}
-              >
-                Next
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
+      <SectionWiseView
+        data={sectionData}
+        loading={sectionLoading}
+        typeLabels={typeLabels}
+        onEdit={openEditDialog}
+        onDelete={(id) => deleteMutation.mutate(id)}
+        selectedIds={sectionSelectedIds}
+        onToggleSelect={(id) =>
+          setSectionSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          })
+        }
+        onToggleSelectAll={(ids, checked) =>
+          setSectionSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (checked) ids.forEach((id) => next.add(id));
+            else ids.forEach((id) => next.delete(id));
+            return next;
+          })
+        }
+        onBulkDelete={() => setSectionBulkDeleteConfirmOpen(true)}
+      />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1609,10 +1368,10 @@ export default function QuestionsPage({
         </DialogContent>
       </Dialog>
 
-      {/* Bulk Deactivate Confirm Dialog */}
+      {/* Section View Bulk Delete Confirm Dialog */}
       <Dialog
-        open={bulkDeleteConfirmOpen}
-        onOpenChange={setBulkDeleteConfirmOpen}
+        open={sectionBulkDeleteConfirmOpen}
+        onOpenChange={setSectionBulkDeleteConfirmOpen}
       >
         <DialogContent>
           <DialogHeader>
@@ -1624,7 +1383,7 @@ export default function QuestionsPage({
             <p className="text-sm text-muted-foreground">
               Are you sure you want to permanently delete{" "}
               <span className="font-bold text-foreground">
-                {table.getSelectedRowModel().rows.length}
+                {sectionSelectedIds.size}
               </span>{" "}
               selected question(s)? This action cannot be undone. All related
               data (options, tags, versions, exam references, answers) will be
@@ -1634,14 +1393,14 @@ export default function QuestionsPage({
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setBulkDeleteConfirmOpen(false)}
+              onClick={() => setSectionBulkDeleteConfirmOpen(false)}
               disabled={bulkDeleting}
             >
               Cancel
             </Button>
             <Button
               variant="destructive"
-              onClick={handleBulkDelete}
+              onClick={handleSectionBulkDelete}
               disabled={bulkDeleting}
             >
               {bulkDeleting && (

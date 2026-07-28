@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { type FastifyPluginAsync } from "fastify";
 import { db } from "../database/db.js";
 import { redis } from "../database/redis.js";
@@ -102,30 +102,53 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
       return reply.code(403).send({ error: "Candidate not found" });
     }
 
-    // Find active attempt
-    // Find active or recently submitted attempt
-    const [activeAttempt] = await db
-      .select({
-        id: attempts.id,
-        status: attempts.status,
-        examBatchId: attempts.examBatchId,
-      })
-      .from(attempts)
-      .where(
-        and(
-          eq(attempts.candidateId, candidateId),
-          inArray(attempts.status, [
-            "in_progress",
-            "paused",
-            "not_started",
-            "terminated",
-            "submitted",
-            "auto_submitted",
-            "force_submitted",
-          ]),
-        ),
-      )
-      .limit(1);
+    // Find active attempt — prioritize in_progress/paused/not_started over
+    // submitted/auto_submitted. Without this, a candidate with an old submitted
+    // attempt would get session:submitted on SSE connect instead of their
+    // current active attempt.
+    let activeAttempt = (
+      await db
+        .select({
+          id: attempts.id,
+          status: attempts.status,
+          examBatchId: attempts.examBatchId,
+        })
+        .from(attempts)
+        .where(
+          and(
+            eq(attempts.candidateId, candidateId),
+            inArray(attempts.status, ["in_progress", "paused", "not_started"]),
+          ),
+        )
+        .orderBy(desc(attempts.createdAt))
+        .limit(1)
+    )[0];
+
+    // If no active attempt, check for a recently submitted one (for UI state)
+    if (!activeAttempt) {
+      activeAttempt = (
+        await db
+          .select({
+            id: attempts.id,
+            status: attempts.status,
+            examBatchId: attempts.examBatchId,
+          })
+          .from(attempts)
+          .where(
+            and(
+              eq(attempts.candidateId, candidateId),
+              inArray(attempts.status, [
+                "submitted",
+                "auto_submitted",
+                "force_submitted",
+                "terminated",
+              ]),
+            ),
+          )
+          .orderBy(desc(attempts.createdAt))
+          .limit(1)
+      )[0];
+    }
 
     // Hijack the response — we're taking over the raw stream for SSE.
     // Without this, Fastify's response lifecycle interferes with the

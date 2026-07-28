@@ -351,7 +351,91 @@ const examRoutes: FastifyPluginAsync = async (app) => {
       questions: sectionQuestions.filter((q) => q.examSectionId === s.id),
     }));
 
-    return reply.send({ ...exam, sections: sectionsWithQuestions });
+    // Also fetch subject questions grouped by sectionName (Excel tab names)
+    // so the exam detail page can show them even without formal exam sections
+    let subjectQuestionGroups: {
+      name: string;
+      questions: {
+        id: string;
+        type: string;
+        contentJson: unknown;
+        options?: {
+          optionText: string;
+          isCorrect: boolean;
+          displayOrder: number;
+        }[];
+      }[];
+    }[] = [];
+    let unassignedSubjectQuestions: (typeof subjectQuestionGroups)[number]["questions"] =
+      [];
+
+    if (exam.subjectId) {
+      const subjQuestions = await db
+        .select({
+          id: questions.id,
+          type: questions.type,
+          contentJson: questions.contentJson,
+          sectionName: questions.sectionName,
+        })
+        .from(questions)
+        .where(eq(questions.subjectId, exam.subjectId))
+        .orderBy(desc(questions.createdAt));
+
+      if (subjQuestions.length > 0) {
+        const subjQuestionIds = subjQuestions.map((q) => q.id);
+        const subjOptions = await db
+          .select({
+            questionId: questionOptions.questionId,
+            optionText: questionOptions.optionText,
+            isCorrect: questionOptions.isCorrect,
+            displayOrder: questionOptions.displayOrder,
+          })
+          .from(questionOptions)
+          .where(
+            sql`${questionOptions.questionId} = ANY(${sql.raw(`ARRAY['${subjQuestionIds.join("','")}']::uuid[]`)})`,
+          )
+          .orderBy(asc(questionOptions.displayOrder));
+
+        const subjOptionsMap = new Map<string, typeof subjOptions>();
+        for (const opt of subjOptions) {
+          const arr = subjOptionsMap.get(opt.questionId) ?? [];
+          arr.push(opt);
+          subjOptionsMap.set(opt.questionId, arr);
+        }
+
+        const sectionMap = new Map<
+          string,
+          (typeof subjectQuestionGroups)[number]["questions"]
+        >();
+        for (const q of subjQuestions) {
+          const enriched = {
+            id: q.id,
+            type: q.type,
+            contentJson: q.contentJson,
+            options: subjOptionsMap.get(q.id) ?? [],
+          };
+          if (q.sectionName) {
+            const arr = sectionMap.get(q.sectionName) ?? [];
+            arr.push(enriched);
+            sectionMap.set(q.sectionName, arr);
+          } else {
+            unassignedSubjectQuestions.push(enriched);
+          }
+        }
+
+        subjectQuestionGroups = [...sectionMap.entries()].map(([name, qs]) => ({
+          name,
+          questions: qs,
+        }));
+      }
+    }
+
+    return reply.send({
+      ...exam,
+      sections: sectionsWithQuestions,
+      subjectQuestionGroups,
+      unassignedSubjectQuestions,
+    });
   });
 
   /* ----- PUT /exams/:id — update exam ----- */
