@@ -66,6 +66,14 @@ export const examsService = {
       `/exams/${examId}/sections/${sectionId}/questions/${eqId}`,
     ),
 
+  downloadSectionTemplate: (sections?: string) =>
+    api
+      .get("/exams/section-template", {
+        params: sections ? { sections } : undefined,
+        responseType: "blob",
+      })
+      .then((res) => res as unknown as Blob),
+
   importQuestions: (examId: string, file: File, subjectId: string) => {
     const formData = new FormData();
     formData.append("file", file);

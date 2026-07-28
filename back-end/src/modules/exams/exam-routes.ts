@@ -663,6 +663,137 @@ const examRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  /* ----- GET /exams/section-template — download multi-tab Excel template ----- */
+  app.get(
+    "/section-template",
+    { preHandler: requireRole("super_admin", "exam_admin", "question_author") },
+    async (request, reply) => {
+      const query = (request.query as { sections?: string }) ?? {};
+      const sectionNames = query.sections
+        ? query.sections
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : ["Section 1", "Section 2"];
+
+      const workbook = new ExcelJS.Workbook();
+
+      const columns = [
+        { header: "Question Text", key: "questionText", width: 60 },
+        { header: "Type", key: "type", width: 18 },
+        { header: "Option 1", key: "opt1", width: 30 },
+        { header: "Option 2", key: "opt2", width: 30 },
+        { header: "Option 3", key: "opt3", width: 30 },
+        { header: "Option 4", key: "opt4", width: 30 },
+        { header: "Option 5", key: "opt5", width: 30 },
+        { header: "Option 6", key: "opt6", width: 30 },
+        { header: "Correct Options", key: "correctOpts", width: 18 },
+        { header: "Solution (optional)", key: "solution", width: 40 },
+        { header: "Explanation (optional)", key: "explanation", width: 40 },
+        {
+          header: "Question Image (optional)",
+          key: "questionImage",
+          width: 25,
+        },
+      ];
+
+      for (const sectionName of sectionNames) {
+        const ws = workbook.addWorksheet(sectionName);
+        ws.columns = columns;
+        ws.getRow(1).font = { bold: true };
+
+        // Example row
+        ws.addRow({
+          questionText: "What is the capital of France?",
+          type: "mcq_single",
+          opt1: "London",
+          opt2: "Paris",
+          opt3: "Berlin",
+          opt4: "Madrid",
+          opt5: "",
+          opt6: "",
+          correctOpts: "2",
+          solution: "Paris",
+          explanation: "Paris has been the capital of France since 987 AD.",
+          questionImage: "",
+        });
+
+        // Example for mcq_multiple
+        ws.addRow({
+          questionText: "Which of the following are prime numbers?",
+          type: "mcq_multiple",
+          opt1: "2",
+          opt2: "4",
+          opt3: "7",
+          opt4: "9",
+          opt5: "",
+          opt6: "",
+          correctOpts: "1,3",
+          solution: "",
+          explanation: "2 and 7 are prime numbers. 4 = 2x2, 9 = 3x3.",
+          questionImage: "",
+        });
+      }
+
+      // Instructions tab
+      const instr = workbook.addWorksheet("Instructions");
+      instr.getColumn(1).width = 30;
+      instr.getColumn(2).width = 70;
+      instr.addRow(["Field", "Description"]);
+      instr.addRow([
+        "Tab Name",
+        "Each tab name becomes a SECTION name in the exam",
+      ]);
+      instr.addRow(["Question Text", "The question text (required)"]);
+      instr.addRow([
+        "Type",
+        "mcq_single, mcq_multiple, or true_false (default: mcq_single)",
+      ]);
+      instr.addRow([
+        "Option 1-6",
+        "Text for each option (min 2 required for MCQ)",
+      ]);
+      instr.addRow([
+        "Correct Options",
+        "Comma-separated option numbers (e.g. 2 or 1,3) or 'all'",
+      ]);
+      instr.addRow(["Solution", "Short solution text (optional)"]);
+      instr.addRow(["Explanation", "Detailed explanation (optional)"]);
+      instr.addRow(["Question Image", "Image URL or filename (optional)"]);
+      instr.addRow([]);
+      instr.addRow(["How to use:"]);
+      instr.addRow([
+        "1. Each tab = one section. Rename tabs to your section names",
+      ]);
+      instr.addRow(["2. Add more tabs if you need more sections"]);
+      instr.addRow(["3. Fill in questions row by row starting from row 2"]);
+      instr.addRow([
+        "4. For mcq_single: put one number in Correct Options (e.g. 2)",
+      ]);
+      instr.addRow([
+        "5. For mcq_multiple: put comma-separated numbers (e.g. 1,3)",
+      ]);
+      instr.addRow([
+        "6. Upload this file via the Import Questions button on the exam page",
+      ]);
+      instr.getRow(1).font = { bold: true };
+      instr.getRow(11).font = { bold: true };
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      return reply
+        .code(200)
+        .header(
+          "Content-Type",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        .header(
+          "Content-Disposition",
+          'attachment; filename="section-wise-question-template.xlsx"',
+        )
+        .send(Buffer.from(buffer));
+    },
+  );
+
   /* ----- POST /exams/:id/import-questions — multi-tab Excel, each tab = section ----- */
   app.post("/:id/import-questions", async (request, reply) => {
     const { id } = request.params as { id: string };

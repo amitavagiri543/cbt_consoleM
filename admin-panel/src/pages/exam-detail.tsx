@@ -1,16 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Download, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
 } from "../components/ui/dialog";
 import { Label } from "../components/ui/label";
 import { examsService } from "../services/exams";
@@ -187,6 +187,28 @@ export default function ExamDetailPage() {
                 </li>
                 <li>Use "all" to mark all options as correct</li>
               </ul>
+              <div className="mt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const blob = await examsService.downloadSectionTemplate();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "section-wise-question-template.xlsx";
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    } catch {
+                      toast.error("Failed to download template");
+                    }
+                  }}
+                >
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  Download Template
+                </Button>
+              </div>
             </div>
           </div>
           <DialogFooter>
