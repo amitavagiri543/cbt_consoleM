@@ -650,25 +650,11 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
         const buf = await file.toBuffer();
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buf);
-        const ws = workbook.getWorksheet(1);
-        if (!ws)
+
+        if (workbook.worksheets.length === 0)
           return reply
             .code(400)
             .send({ error: "Excel file has no worksheets" });
-
-        const headers: string[] = [];
-        ws.getRow(1).eachCell((cell, colNumber) => {
-          headers[colNumber - 1] = String(cell.value ?? "")
-            .toLowerCase()
-            .trim();
-        });
-
-        const getCol = (row: ExcelJS.Row, name: string): string => {
-          const idx = headers.indexOf(name);
-          if (idx < 0) return "";
-          const cell = row.getCell(idx + 1);
-          return String(cell.value ?? "").trim();
-        };
 
         const excelValidItems: {
           questionValues: QuestionInsert;
@@ -681,80 +667,106 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
           content: Record<string, unknown>;
         }[] = [];
 
-        for (let rowIdx = 2; rowIdx <= ws.rowCount; rowIdx++) {
-          const row = ws.getRow(rowIdx);
-          const questionText =
-            getCol(row, "question text") || getCol(row, "question");
-          if (!questionText) {
-            failed++;
-            errors.push({ row: rowIdx, error: "Empty question text" });
-            continue;
-          }
+        // Process ALL worksheet tabs (skip Instructions tab)
+        for (const ws of workbook.worksheets) {
+          const sheetName = ws.name.trim();
+          if (sheetName.toLowerCase() === "instructions") continue;
 
-          try {
-            const type = getCol(row, "type") || "mcq_single";
-            const solutionText = getCol(row, "solution");
-            const explanation = getCol(row, "explanation");
-            const tagsStr = getCol(row, "tags");
+          // Parse headers from row 1 for this worksheet
+          const headers: string[] = [];
+          ws.getRow(1).eachCell((cell, colNumber) => {
+            headers[colNumber - 1] = String(cell.value ?? "")
+              .toLowerCase()
+              .trim();
+          });
 
-            const opts: {
-              text: string;
-              isCorrect: boolean;
-              displayOrder: number;
-            }[] = [];
-            const correctSet = new Set(
-              getCol(row, "correct options")
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-                .map(Number),
-            );
+          const getCol = (row: ExcelJS.Row, name: string): string => {
+            const idx = headers.indexOf(name);
+            if (idx < 0) return "";
+            const cell = row.getCell(idx + 1);
+            return String(cell.value ?? "").trim();
+          };
 
-            for (let oi = 1; oi <= 6; oi++) {
-              const optText = getCol(row, `option ${oi}`);
-              if (optText) {
-                opts.push({
-                  text: optText,
-                  isCorrect: correctSet.has(oi),
-                  displayOrder: oi,
+          for (let rowIdx = 2; rowIdx <= ws.rowCount; rowIdx++) {
+            const row = ws.getRow(rowIdx);
+            const questionText =
+              getCol(row, "question text") || getCol(row, "question");
+            if (!questionText) {
+              if (ws.rowCount > 2) {
+                failed++;
+                errors.push({
+                  row: rowIdx,
+                  error: `Empty question text (tab: ${sheetName})`,
                 });
               }
+              continue;
             }
 
-            const content = { text: questionText };
-            const solution =
-              solutionText || explanation
-                ? {
-                    text: solutionText || undefined,
-                    explanation: explanation || undefined,
-                  }
-                : null;
-            const tags = tagsStr
-              ? tagsStr
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean)
-              : [];
+            try {
+              const type = getCol(row, "type") || "mcq_single";
+              const solutionText = getCol(row, "solution");
+              const explanation = getCol(row, "explanation");
+              const tagsStr = getCol(row, "tags");
 
-            excelValidItems.push({
-              questionValues: {
-                subjectId,
-                type: type as "mcq_single",
-                contentJson: content,
-                solutionJson: solution,
-                createdBy: request.user.sub,
-              },
-              options: opts.map((o) => ({
-                optionText: o.text,
-                isCorrect: o.isCorrect,
-                displayOrder: o.displayOrder,
-              })),
-              tags,
-              content,
-            });
-          } catch (err) {
-            failed++;
-            errors.push({ row: rowIdx, error: (err as Error).message });
+              const opts: {
+                text: string;
+                isCorrect: boolean;
+                displayOrder: number;
+              }[] = [];
+              const correctSet = new Set(
+                getCol(row, "correct options")
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map(Number),
+              );
+
+              for (let oi = 1; oi <= 6; oi++) {
+                const optText = getCol(row, `option ${oi}`);
+                if (optText) {
+                  opts.push({
+                    text: optText,
+                    isCorrect: correctSet.has(oi),
+                    displayOrder: oi,
+                  });
+                }
+              }
+
+              const content = { text: questionText };
+              const solution =
+                solutionText || explanation
+                  ? {
+                      text: solutionText || undefined,
+                      explanation: explanation || undefined,
+                    }
+                  : null;
+              const tags = tagsStr
+                ? tagsStr
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                : [];
+
+              excelValidItems.push({
+                questionValues: {
+                  subjectId,
+                  type: type as "mcq_single",
+                  contentJson: content,
+                  solutionJson: solution,
+                  createdBy: request.user.sub,
+                },
+                options: opts.map((o) => ({
+                  optionText: o.text,
+                  isCorrect: o.isCorrect,
+                  displayOrder: o.displayOrder,
+                })),
+                tags,
+                content,
+              });
+            } catch (err) {
+              failed++;
+              errors.push({ row: rowIdx, error: (err as Error).message });
+            }
           }
         }
 
@@ -1065,25 +1077,11 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
       if (extracted.excelFile) {
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(extracted.excelFile.buffer as any);
-        const ws = workbook.getWorksheet(1);
-        if (!ws)
+
+        if (workbook.worksheets.length === 0)
           return reply
             .code(400)
             .send({ error: "Excel file has no worksheets" });
-
-        const headers: string[] = [];
-        ws.getRow(1).eachCell((cell, colNumber) => {
-          headers[colNumber - 1] = String(cell.value ?? "")
-            .toLowerCase()
-            .trim();
-        });
-
-        const getCol = (row: ExcelJS.Row, name: string): string => {
-          const idx = headers.indexOf(name);
-          if (idx < 0) return "";
-          const cell = row.getCell(idx + 1);
-          return String(cell.value ?? "").trim();
-        };
 
         const excelValidItems: {
           questionValues: QuestionInsert;
@@ -1096,114 +1094,139 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
           content: Record<string, unknown>;
         }[] = [];
 
-        for (let rowIdx = 2; rowIdx <= ws.rowCount; rowIdx++) {
-          const row = ws.getRow(rowIdx);
-          const questionText =
-            getCol(row, "question text") || getCol(row, "question");
-          if (!questionText) {
-            failed++;
-            errors.push({ row: rowIdx, error: "Empty question text" });
-            continue;
-          }
+        // Process ALL worksheet tabs (skip Instructions tab)
+        for (const ws of workbook.worksheets) {
+          const sheetName = ws.name.trim();
+          if (sheetName.toLowerCase() === "instructions") continue;
 
-          try {
-            const type = getCol(row, "type") || "mcq_single";
-            const solutionText = getCol(row, "solution");
-            const explanation = getCol(row, "explanation");
-            const tagsStr = getCol(row, "tags");
-            const questionImageRef =
-              getCol(row, "question image") || getCol(row, "image");
+          const headers: string[] = [];
+          ws.getRow(1).eachCell((cell, colNumber) => {
+            headers[colNumber - 1] = String(cell.value ?? "")
+              .toLowerCase()
+              .trim();
+          });
 
-            // Upload question image if referenced
-            const mediaUrls: string[] = [];
-            if (questionImageRef) {
-              const imgFile = findImage(extracted.images, questionImageRef);
-              if (imgFile) {
-                const url = await uploadImage(
-                  imgFile.buffer,
-                  `questions/${subjectId}`,
-                  imgFile.filename,
-                );
-                mediaUrls.push(url);
-              } else if (questionImageRef.startsWith("http")) {
-                mediaUrls.push(questionImageRef);
-              }
-            }
+          const getCol = (row: ExcelJS.Row, name: string): string => {
+            const idx = headers.indexOf(name);
+            if (idx < 0) return "";
+            const cell = row.getCell(idx + 1);
+            return String(cell.value ?? "").trim();
+          };
 
-            const opts: {
-              text: string;
-              isCorrect: boolean;
-              displayOrder: number;
-            }[] = [];
-            const correctSet = new Set(
-              getCol(row, "correct options")
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean)
-                .map(Number),
-            );
-
-            for (let oi = 1; oi <= 6; oi++) {
-              const optText = getCol(row, `option ${oi}`);
-              const optImageRef = getCol(row, `option ${oi} image`);
-              if (optText || optImageRef) {
-                // Upload option image if referenced
-                if (optImageRef) {
-                  const imgFile = findImage(extracted.images, optImageRef);
-                  if (imgFile) {
-                    const url = await uploadImage(
-                      imgFile.buffer,
-                      `questions/${subjectId}/options`,
-                      imgFile.filename,
-                    );
-                    mediaUrls.push(url);
-                  } else if (optImageRef.startsWith("http")) {
-                    mediaUrls.push(optImageRef);
-                  }
-                }
-                opts.push({
-                  text: optText || "",
-                  isCorrect: correctSet.has(oi),
-                  displayOrder: oi,
+          for (let rowIdx = 2; rowIdx <= ws.rowCount; rowIdx++) {
+            const row = ws.getRow(rowIdx);
+            const questionText =
+              getCol(row, "question text") || getCol(row, "question");
+            if (!questionText) {
+              if (ws.rowCount > 2) {
+                failed++;
+                errors.push({
+                  row: rowIdx,
+                  error: `Empty question text (tab: ${sheetName})`,
                 });
               }
+              continue;
             }
 
-            const content = { text: questionText };
-            const solution =
-              solutionText || explanation
-                ? {
-                    text: solutionText || undefined,
-                    explanation: explanation || undefined,
-                  }
-                : null;
-            const tags = tagsStr
-              ? tagsStr
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean)
-              : [];
+            try {
+              const type = getCol(row, "type") || "mcq_single";
+              const solutionText = getCol(row, "solution");
+              const explanation = getCol(row, "explanation");
+              const tagsStr = getCol(row, "tags");
+              const questionImageRef =
+                getCol(row, "question image") || getCol(row, "image");
 
-            excelValidItems.push({
-              questionValues: {
-                subjectId,
-                type: type as "mcq_single",
-                contentJson: content,
-                mediaUrlsJson: mediaUrls.length > 0 ? mediaUrls : null,
-                solutionJson: solution,
-                createdBy: request.user.sub,
-              },
-              options: opts.map((o) => ({
-                optionText: o.text,
-                isCorrect: o.isCorrect,
-                displayOrder: o.displayOrder,
-              })),
-              tags,
-              content,
-            });
-          } catch (err) {
-            failed++;
-            errors.push({ row: rowIdx, error: (err as Error).message });
+              // Upload question image if referenced
+              const mediaUrls: string[] = [];
+              if (questionImageRef) {
+                const imgFile = findImage(extracted.images, questionImageRef);
+                if (imgFile) {
+                  const url = await uploadImage(
+                    imgFile.buffer,
+                    `questions/${subjectId}`,
+                    imgFile.filename,
+                  );
+                  mediaUrls.push(url);
+                } else if (questionImageRef.startsWith("http")) {
+                  mediaUrls.push(questionImageRef);
+                }
+              }
+
+              const opts: {
+                text: string;
+                isCorrect: boolean;
+                displayOrder: number;
+              }[] = [];
+              const correctSet = new Set(
+                getCol(row, "correct options")
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map(Number),
+              );
+
+              for (let oi = 1; oi <= 6; oi++) {
+                const optText = getCol(row, `option ${oi}`);
+                const optImageRef = getCol(row, `option ${oi} image`);
+                if (optText || optImageRef) {
+                  // Upload option image if referenced
+                  if (optImageRef) {
+                    const imgFile = findImage(extracted.images, optImageRef);
+                    if (imgFile) {
+                      const url = await uploadImage(
+                        imgFile.buffer,
+                        `questions/${subjectId}/options`,
+                        imgFile.filename,
+                      );
+                      mediaUrls.push(url);
+                    } else if (optImageRef.startsWith("http")) {
+                      mediaUrls.push(optImageRef);
+                    }
+                  }
+                  opts.push({
+                    text: optText || "",
+                    isCorrect: correctSet.has(oi),
+                    displayOrder: oi,
+                  });
+                }
+              }
+
+              const content = { text: questionText };
+              const solution =
+                solutionText || explanation
+                  ? {
+                      text: solutionText || undefined,
+                      explanation: explanation || undefined,
+                    }
+                  : null;
+              const tags = tagsStr
+                ? tagsStr
+                    .split(",")
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                : [];
+
+              excelValidItems.push({
+                questionValues: {
+                  subjectId,
+                  type: type as "mcq_single",
+                  contentJson: content,
+                  mediaUrlsJson: mediaUrls.length > 0 ? mediaUrls : null,
+                  solutionJson: solution,
+                  createdBy: request.user.sub,
+                },
+                options: opts.map((o) => ({
+                  optionText: o.text,
+                  isCorrect: o.isCorrect,
+                  displayOrder: o.displayOrder,
+                })),
+                tags,
+                content,
+              });
+            } catch (err) {
+              failed++;
+              errors.push({ row: rowIdx, error: (err as Error).message });
+            }
           }
         }
 
