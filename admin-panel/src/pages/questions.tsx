@@ -144,8 +144,6 @@ export default function QuestionsPage({
     staleTime: 5 * 60 * 1000,
   });
 
-  const [showInactive, setShowInactive] = useState(false);
-
   const { data, isLoading } = useQuery({
     queryKey: [
       "questions",
@@ -153,7 +151,6 @@ export default function QuestionsPage({
       pagination.pageSize,
       debouncedSearch,
       filters,
-      showInactive,
     ],
     queryFn: () =>
       questionsService.list({
@@ -162,7 +159,6 @@ export default function QuestionsPage({
         search: debouncedSearch || undefined,
         subjectId: filters.subjectId || undefined,
         type: filters.type || undefined,
-        isActive: showInactive ? undefined : true,
       }),
     placeholderData: (prev) => prev,
   });
@@ -277,13 +273,13 @@ export default function QuestionsPage({
     onError: () => toast.error("Failed to create exam"),
   });
 
-  const deactivateMutation = useMutation({
+  const deleteMutation = useMutation({
     mutationFn: (id: string) => questionsService.deactivate(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["questions"] });
-      toast.success("Question deactivated");
+      toast.success("Question deleted");
     },
-    onError: () => toast.error("Failed to deactivate question"),
+    onError: () => toast.error("Failed to delete question"),
   });
 
   const [editOpen, setEditOpen] = useState(false);
@@ -484,19 +480,7 @@ export default function QuestionsPage({
       header: "Type",
       cell: ({ row }) => {
         const type = row.getValue("type") as QuestionType;
-        return (
-          <div className="flex items-center gap-2">
-            <Badge variant="outline">{typeLabels[type]}</Badge>
-            {!row.original.isActive && (
-              <Badge
-                variant="secondary"
-                className="text-xs text-muted-foreground"
-              >
-                Inactive
-              </Badge>
-            )}
-          </div>
-        );
+        return <Badge variant="outline">{typeLabels[type]}</Badge>;
       },
     },
     {
@@ -512,16 +496,14 @@ export default function QuestionsPage({
           >
             <Pencil className="h-4 w-4" />
           </Button>
-          {row.original.isActive && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => deactivateMutation.mutate(row.original.id)}
-              title="Deactivate"
-            >
-              <Trash2 className="h-4 w-4 text-red-600" />
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => deleteMutation.mutate(row.original.id)}
+            title="Delete"
+          >
+            <Trash2 className="h-4 w-4 text-red-600" />
+          </Button>
         </div>
       ),
     },
@@ -545,25 +527,18 @@ export default function QuestionsPage({
     const selectedRows = table.getSelectedRowModel().rows;
     if (selectedRows.length === 0) return;
     setBulkDeleting(true);
+    const selectedIds = selectedRows.map((row) => row.original.id);
     // Clear selection and close dialog immediately to prevent stale state
     setRowSelection({});
     setBulkDeleteConfirmOpen(false);
     try {
-      const results = await Promise.allSettled(
-        selectedRows.map((row) => questionsService.deactivate(row.original.id)),
-      );
-      const succeeded = results.filter((r) => r.status === "fulfilled").length;
-      const failed = results.filter((r) => r.status === "rejected").length;
-      if (succeeded > 0) {
-        toast.success(`Successfully deactivated ${succeeded} question(s)`);
-        queryClient.invalidateQueries({ queryKey: ["questions"] });
-      }
-      if (failed > 0) {
-        toast.error(`Failed to deactivate ${failed} question(s)`);
-      }
-    } catch (err) {
+      await questionsService.bulkDelete(selectedIds);
+      toast.success(`Successfully deleted ${selectedIds.length} question(s)`);
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+    } catch (err: any) {
       console.error(err);
-      toast.error("Failed to deactivate questions");
+      const msg = err.response?.data?.error ?? "Failed to delete questions";
+      toast.error(typeof msg === "string" ? msg : "Failed to delete questions");
     } finally {
       setBulkDeleting(false);
     }
@@ -595,17 +570,6 @@ export default function QuestionsPage({
               className="pl-9 h-9 text-xs"
             />
           </div>
-          <Button
-            variant={showInactive ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setShowInactive((v) => !v);
-              setPagination((p) => ({ ...p, pageIndex: 0 }));
-            }}
-            className="h-9 text-xs whitespace-nowrap"
-          >
-            {showInactive ? "Showing All" : "Active Only"}
-          </Button>
           {!propSubjectId && (
             <select
               value={filters.subjectId}
@@ -634,7 +598,7 @@ export default function QuestionsPage({
               className="shadow-sm transition-all animate-in fade-in zoom-in-95 duration-200"
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              Deactivate Selected ({table.getSelectedRowModel().rows.length})
+              Delete Selected ({table.getSelectedRowModel().rows.length})
             </Button>
           )}
           <div className="relative z-20">
@@ -1384,17 +1348,18 @@ export default function QuestionsPage({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="text-red-500">
-              Confirm Bulk Deactivation
+              Confirm Bulk Delete
             </DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
-              Are you sure you want to deactivate{" "}
+              Are you sure you want to permanently delete{" "}
               <span className="font-bold text-foreground">
                 {table.getSelectedRowModel().rows.length}
               </span>{" "}
-              selected question(s)? Deactivated questions will be hidden from
-              exams.
+              selected question(s)? This action cannot be undone. All related
+              data (options, tags, versions, exam references, answers) will be
+              permanently removed.
             </p>
           </div>
           <DialogFooter>
@@ -1413,7 +1378,7 @@ export default function QuestionsPage({
               {bulkDeleting && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-              Deactivate Selected
+              Delete Selected
             </Button>
           </DialogFooter>
         </DialogContent>

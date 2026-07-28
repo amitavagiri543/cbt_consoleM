@@ -1,8 +1,10 @@
-import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { type FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { db } from "../../database/db.js";
 import {
+    answers,
+    examQuestions,
     questionOptions,
     questions,
     questionTags,
@@ -363,20 +365,67 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  // Permanent delete a single question and all related data
   app.delete(
     "/:id",
     { preHandler: requireRole("super_admin", "exam_admin") },
     async (request, reply) => {
       const id = (request.params as { id: string }).id;
 
-      const [updated] = await db
-        .update(questions)
-        .set({ isActive: false, updatedAt: new Date() })
+      const [existing] = await db
+        .select({ id: questions.id })
+        .from(questions)
         .where(eq(questions.id, id))
-        .returning();
-      if (!updated)
+        .limit(1);
+      if (!existing)
         return reply.code(404).send({ error: "Question not found" });
-      return { message: "Question deactivated" };
+
+      await db.transaction(async (tx) => {
+        // Delete child records in FK order
+        await tx.delete(answers).where(eq(answers.questionId, id));
+        await tx.delete(examQuestions).where(eq(examQuestions.questionId, id));
+        await tx
+          .delete(questionVersions)
+          .where(eq(questionVersions.questionId, id));
+        await tx
+          .delete(questionOptions)
+          .where(eq(questionOptions.questionId, id));
+        await tx.delete(questionTags).where(eq(questionTags.questionId, id));
+        await tx.delete(questions).where(eq(questions.id, id));
+      });
+
+      return { message: "Question deleted permanently" };
+    },
+  );
+
+  // Bulk permanent delete multiple questions
+  app.delete(
+    "/",
+    { preHandler: requireRole("super_admin", "exam_admin") },
+    async (request, reply) => {
+      const { ids } = request.body as { ids: string[] };
+      if (!ids || !Array.isArray(ids) || ids.length === 0)
+        return reply.code(400).send({ error: "No question IDs provided" });
+
+      await db.transaction(async (tx) => {
+        // Delete child records in FK order
+        await tx.delete(answers).where(inArray(answers.questionId, ids));
+        await tx
+          .delete(examQuestions)
+          .where(inArray(examQuestions.questionId, ids));
+        await tx
+          .delete(questionVersions)
+          .where(inArray(questionVersions.questionId, ids));
+        await tx
+          .delete(questionOptions)
+          .where(inArray(questionOptions.questionId, ids));
+        await tx
+          .delete(questionTags)
+          .where(inArray(questionTags.questionId, ids));
+        await tx.delete(questions).where(inArray(questions.id, ids));
+      });
+
+      return { message: `${ids.length} question(s) deleted permanently` };
     },
   );
 

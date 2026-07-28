@@ -27,6 +27,9 @@ export const questionsService = {
   deactivate: (id: string) =>
     api.delete<unknown, { message: string }>(`/questions/${id}`),
 
+  bulkDelete: (ids: string[]) =>
+    api.delete<unknown, { message: string }>(`/questions`, { data: { ids } }),
+
   getVersions: (id: string) =>
     api.get<unknown, { data: QuestionVersion[]; total: number }>(
       `/questions/${id}/versions`,
