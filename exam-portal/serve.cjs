@@ -41,7 +41,21 @@ const server = http.createServer((req, res) => {
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
     });
-    proxyReq.on("error", () => { res.writeHead(502); res.end("Backend unavailable"); });
+    proxyReq.on("error", () => {
+      res.writeHead(502);
+      res.end("Backend unavailable");
+    });
+
+    // Propagate client disconnect to backend — critical for SSE close detection.
+    // Without this, when the candidate closes the browser tab, the backend
+    // never sees the connection close and the auto-pause never fires.
+    req.on("close", () => {
+      proxyReq.destroy();
+    });
+    res.on("close", () => {
+      proxyReq.destroy();
+    });
+
     req.pipe(proxyReq);
     return;
   }

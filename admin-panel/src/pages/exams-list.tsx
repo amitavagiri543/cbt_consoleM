@@ -153,22 +153,10 @@ export default function ExamsListPage({
   });
 
   // Fetch exam batches to know which exams are running
-  // Use `select` with a plain object so React Query's structural sharing
-  // can skip re-renders when the polled data hasn't actually changed
   const examBatchMap =
     useQuery({
       queryKey: ["exam-batches", "for-exams-table", institutionId],
       queryFn: () => examBatchService.list({ pageSize: 100 }),
-      refetchInterval: (query) => {
-        const batches = query.state.data?.data ?? [];
-        const hasActive = batches.some(
-          (b) =>
-            b.status === "active" ||
-            b.status === "published" ||
-            b.status === "paused",
-        );
-        return hasActive ? 15000 : false;
-      },
       select: (resp) => {
         const obj: Record<string, { id: string; status: string }> = {};
         for (const b of resp.data ?? []) {

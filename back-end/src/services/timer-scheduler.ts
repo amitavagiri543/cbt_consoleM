@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../database/db.js";
 import { redis } from "../database/redis.js";
 import { attempts } from "../database/schemas/index.js";
@@ -7,11 +7,9 @@ import { roomManager } from "../websocket/rooms.js";
 
 const ZSET_KEY = "timer:autosubmit";
 const PROMOTER_INTERVAL_MS = 1000; // 1 second
-const FALLBACK_INTERVAL_MS = 60_000; // 60 seconds
 const BATCH_SIZE = 100;
 
 let promoterId: NodeJS.Timeout | null = null;
-let fallbackId: NodeJS.Timeout | null = null;
 
 // ─── Public API: schedule / cancel ─────────────────────────────────────────
 
@@ -126,44 +124,10 @@ async function processExpiredAttempt(
   });
 }
 
-// ─── Fallback: DB scan safety net ───────────────────────────────────────────
-
-/**
- * Fallback DB scan — catches any expired attempts that slipped through
- * (e.g., Redis was down when scheduled, or ZSET was flushed).
- * Runs every 60s as a safety net.
- */
-export async function fallbackTick(): Promise<void> {
-  const rows = await db
-    .select({
-      id: attempts.id,
-      candidateId: attempts.candidateId,
-    })
-    .from(attempts)
-    .where(
-      sql`${attempts.status} = 'in_progress'
-          AND ${attempts.startedAt} IS NOT NULL
-          AND ${attempts.remainingTimeSecs} IS NOT NULL
-          AND (${attempts.startedAt} + (${attempts.remainingTimeSecs} || ' seconds')::interval) <= NOW()`,
-    )
-    .limit(BATCH_SIZE);
-
-  if (rows.length === 0) return;
-
-  await Promise.all(
-    rows.map((r) =>
-      processExpiredAttempt(r.id, r.candidateId).catch((err) => {
-        console.error(`[timer-scheduler] Fallback failed for ${r.id}:`, err);
-      }),
-    ),
-  );
-}
-
 /**
  * Start the server-authoritative timer scheduler.
  *
  * - Promoter: runs every 1s, checks Redis ZSET for due auto-submit jobs
- * - Fallback: runs every 60s, scans DB for any expired attempts that slipped through
  *
  * Per M2.10: Server-authoritative timer with Redis-backed scheduling.
  */
@@ -181,15 +145,6 @@ export function startTimerScheduler(): void {
     }
   }, PROMOTER_INTERVAL_MS);
   promoterId.unref();
-
-  fallbackId = setInterval(async () => {
-    try {
-      await fallbackTick();
-    } catch (err) {
-      console.error("[timer-scheduler] Fallback tick failed:", err);
-    }
-  }, FALLBACK_INTERVAL_MS);
-  fallbackId.unref();
 }
 
 /**
@@ -199,9 +154,5 @@ export function stopTimerScheduler(): void {
   if (promoterId) {
     clearInterval(promoterId);
     promoterId = null;
-  }
-  if (fallbackId) {
-    clearInterval(fallbackId);
-    fallbackId = null;
   }
 }

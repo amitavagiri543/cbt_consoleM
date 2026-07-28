@@ -21,6 +21,8 @@ interface UIState {
   setCustomBreadcrumbs: (crumbs: BreadcrumbItem[] | null) => void;
   pageHeaderOverride: PageHeaderOverride | null;
   setPageHeaderOverride: (header: PageHeaderOverride | null) => void;
+  backAction: (() => void) | null;
+  setBackAction: (action: (() => void) | null) => void;
 }
 
 const getInitialTheme = (): ThemeMode => {
@@ -50,6 +52,8 @@ export const useUIStore = create<UIState>((set) => ({
   setCustomBreadcrumbs: (customBreadcrumbs) => set({ customBreadcrumbs }),
   pageHeaderOverride: null,
   setPageHeaderOverride: (pageHeaderOverride) => set({ pageHeaderOverride }),
+  backAction: null,
+  setBackAction: (backAction) => set({ backAction }),
 }));
 
 

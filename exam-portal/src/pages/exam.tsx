@@ -114,6 +114,7 @@ export default function CandidateExamPage() {
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
   const [forceLogout, setForceLogout] = useState(false);
+  const [examSubmitted, setExamSubmitted] = useState(false);
   const [serverPaused, setServerPaused] = useState(false);
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [submitStep, setSubmitStep] = useState(0); // 0=hidden, 1=first confirm, 2=second confirm, 3=final confirm
@@ -265,6 +266,16 @@ export default function CandidateExamPage() {
                 lastQId,
               });
             }
+          } else if (
+            state.status === "submitted" ||
+            state.status === "auto_submitted" ||
+            state.status === "force_submitted" ||
+            state.status === "terminated"
+          ) {
+            // Exam already submitted — show submitted screen, clear localStorage
+            localStorage.removeItem(storageKey);
+            localStorage.removeItem(`${storageKey}_lastQ`);
+            setExamSubmitted(true);
           } else {
             localStorage.removeItem(storageKey);
             localStorage.removeItem(`${storageKey}_lastQ`);
@@ -407,7 +418,7 @@ export default function CandidateExamPage() {
       }
       toast.success("Exam submitted successfully!");
       queryClient.invalidateQueries({ queryKey: ["candidate-exams"] });
-      navigate("/exams");
+      setExamSubmitted(true);
     } catch (err: any) {
       const errData = err.response?.data?.error;
       const msg =
@@ -423,6 +434,7 @@ export default function CandidateExamPage() {
 
   // Timer countdown
   const timeExpiredRef = useRef(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
   useEffect(() => {
     if (!examStarted || remainingSecs <= 0 || timeExpiredRef.current) return;
     const timer = setInterval(() => {
@@ -527,9 +539,17 @@ export default function CandidateExamPage() {
     const eventSource = new EventSource(
       `/api/sse/candidate?token=${encodeURIComponent(token)}`,
     );
+    eventSourceRef.current = eventSource;
 
-    eventSource.addEventListener("session:active", () => {
+    eventSource.addEventListener("session:active", (e: any) => {
       setServerPaused(false);
+      try {
+        const data = JSON.parse(e.data);
+        if (data.remainingTimeSecs != null && data.serverTime != null) {
+          const drift = Math.floor((Date.now() - data.serverTime) / 1000);
+          setRemainingSecs(Math.max(0, data.remainingTimeSecs - drift));
+        }
+      } catch {}
     });
 
     eventSource.addEventListener("session:auto_resumed", (e: any) => {
@@ -537,8 +557,10 @@ export default function CandidateExamPage() {
       toast.success("Connection restored.");
       try {
         const data = JSON.parse(e.data);
-        if (data.remainingTimeSecs != null)
-          setRemainingSecs(data.remainingTimeSecs);
+        if (data.remainingTimeSecs != null && data.serverTime != null) {
+          const drift = Math.floor((Date.now() - data.serverTime) / 1000);
+          setRemainingSecs(Math.max(0, data.remainingTimeSecs - drift));
+        }
       } catch {}
     });
 
@@ -564,8 +586,10 @@ export default function CandidateExamPage() {
       setServerPaused(false);
       try {
         const data = JSON.parse(e.data);
-        if (data.remainingTimeSecs != null)
-          setRemainingSecs(data.remainingTimeSecs);
+        if (data.remainingTimeSecs != null && data.serverTime != null) {
+          const drift = Math.floor((Date.now() - data.serverTime) / 1000);
+          setRemainingSecs(Math.max(0, data.remainingTimeSecs - drift));
+        }
       } catch {}
     });
 
@@ -575,11 +599,19 @@ export default function CandidateExamPage() {
     });
 
     eventSource.addEventListener("session:submitted", () => {
-      toast.info("Exam submitted.");
+      setExamSubmitted(true);
+      if (storageKey) {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(`${storageKey}_lastQ`);
+      }
     });
 
     eventSource.addEventListener("session:auto_submitted", () => {
-      toast.info("Time expired — exam auto-submitted.");
+      setExamSubmitted(true);
+      if (storageKey) {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(`${storageKey}_lastQ`);
+      }
     });
 
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -605,12 +637,25 @@ export default function CandidateExamPage() {
 
     return () => {
       eventSource.close();
+      eventSourceRef.current = null;
     };
   }, [examStarted, attemptId, forceLogout]);
 
-  // The SSE connection close handler on the backend auto-pauses the attempt
-  // when the tab is closed. No beforeunload handler needed — the server
-  // detects the dropped SSE connection and pauses immediately.
+  // Close SSE on pagehide — ensures backend gets immediate close event
+  // even on mobile browsers that keep connections alive in background
+  useEffect(() => {
+    if (!examStarted || !attemptId) return;
+    const handlePageHide = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [examStarted, attemptId]);
 
   // Force logout
   useEffect(() => {
@@ -721,6 +766,58 @@ export default function CandidateExamPage() {
   };
 
   // ═══ OVERLAYS ═══
+
+  if (examSubmitted) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          minHeight: "100vh",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#F5F5F5",
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: "50%",
+            background: "#E8F5E9",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <span style={{ fontSize: 32, color: "#2E7D32" }}>✓</span>
+        </div>
+        <h1 style={{ fontSize: 24, fontWeight: 600, color: "#212121" }}>
+          Exam Submitted
+        </h1>
+        <p style={{ fontSize: 14, color: "#757575" }}>
+          Your exam has been submitted successfully.
+        </p>
+        <button
+          onClick={() => navigate("/exams")}
+          style={{
+            background: "#1565C0",
+            color: "#FFFFFF",
+            border: "none",
+            borderRadius: 6,
+            padding: "10px 24px",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            marginTop: 8,
+          }}
+        >
+          Back to Exam List
+        </button>
+      </div>
+    );
+  }
 
   if (forceLogout) {
     return (
@@ -1006,10 +1103,17 @@ export default function CandidateExamPage() {
           return null;
         }
       })();
-    const isResume = !!pendingResume;
-    const displayTimeSecs = isResume
-      ? pendingResume!.remainingSecs
-      : (examMeta?.durationMinutes ?? 0) * 60;
+    const isResume =
+      !!pendingResume ||
+      examMeta?.attemptStatus === "paused" ||
+      examMeta?.attemptStatus === "in_progress";
+    const displayTimeSecs = pendingResume
+      ? pendingResume.remainingSecs
+      : examMeta?.attemptStatus === "paused" ||
+          examMeta?.attemptStatus === "in_progress"
+        ? (examMeta?.attemptRemainingTimeSecs ??
+          (examMeta?.durationMinutes ?? 0) * 60)
+        : (examMeta?.durationMinutes ?? 0) * 60;
 
     return (
       <div
@@ -1410,10 +1514,10 @@ export default function CandidateExamPage() {
           {/* Action button: START (fresh) or RESUME (reconnect) */}
           <button
             onClick={() =>
-              isResume ? handleResume() : startExamMutation.mutate()
+              pendingResume ? handleResume() : startExamMutation.mutate()
             }
             disabled={
-              (isResume ? false : startExamMutation.isPending) ||
+              (pendingResume ? false : startExamMutation.isPending) ||
               questionsLoading
             }
             style={{

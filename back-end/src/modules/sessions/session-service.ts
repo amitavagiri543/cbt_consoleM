@@ -41,9 +41,6 @@ async function broadcastSessionEvent(
 ): Promise<void> {
   const payload = { ...data, attemptId, serverTime: Date.now() };
 
-  // Broadcast to the attempt room (candidate)
-  sseManager.broadcast(`attempt:${attemptId}`, event, payload);
-
   // Look up examBatchId from cache, fall back to DB
   let examBatchId = attemptBatchCache.get(attemptId);
   if (!examBatchId) {
@@ -60,9 +57,12 @@ async function broadcastSessionEvent(
     }
   }
 
-  if (examBatchId) {
-    sseManager.broadcast(`examBatch:${examBatchId}`, event, payload);
-  }
+  // Broadcast to both rooms with deduplication — a candidate SSE client
+  // may be in both attempt: and examBatch: rooms; without dedup they'd
+  // receive every event twice (causing duplicate toast notifications).
+  const rooms = [`attempt:${attemptId}`];
+  if (examBatchId) rooms.push(`examBatch:${examBatchId}`);
+  sseManager.broadcastToMany(rooms, event, payload);
 }
 
 type AttemptStatus =

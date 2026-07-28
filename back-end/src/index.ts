@@ -355,15 +355,11 @@ const start = async () => {
 
     // Start server-authoritative timer scheduler (M2.10)
     startTimerScheduler();
-    app.log.info(
-      "Timer scheduler started — Redis ZSET promoter (1s) + DB fallback (60s)",
-    );
+    app.log.info("Timer scheduler started — Redis ZSET promoter (1s)");
 
     // Start disconnect watcher for auto-pause on client disconnect
     await startDisconnectWatcher();
-    app.log.info(
-      "Disconnect watcher started — Redis keyspace + fallback poller",
-    );
+    app.log.info("Disconnect watcher started — Redis keyspace notifications");
   } catch (err) {
     app.log.error(err);
     process.exit(1);

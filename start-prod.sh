@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # ============================================================
-# CBT Examination System - PRODUCTION Startup Script (macOS/Linux)
+# CBT Examination System - DEV (Watch Mode) Startup Script
 # ============================================================
-# Builds the frontends and serves them as static production
-# bundles (no Vite dev server, no Google Fonts, works on LAN
-# and fully offline).
+# Starts all services with hot-reload / file watching:
+#   - Backend: tsx watch (auto-restart on TS file changes)
+#   - Exam Portal: vite dev server (HMR)
+#   - Admin Panel: vite dev server (HMR)
 #
 # Usage: ./start-prod.sh
 # ============================================================
@@ -51,14 +52,14 @@ fi
 
 echo ""
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}  CBT Examination System - PRODUCTION   ${NC}"
+echo -e "${CYAN}  CBT Examination System - DEV (WATCH)  ${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 
 # ------------------------------------------------------------
 # STEP 1: Clean up existing processes on our ports
 # ------------------------------------------------------------
-warn "[1/6] Cleaning up existing processes..."
+warn "[1/4] Cleaning up existing processes..."
 for port in 3000 5173 5174; do
   pids=$(lsof -ti :"$port" 2>/dev/null || true)
   if [ -n "$pids" ]; then
@@ -69,24 +70,10 @@ done
 sleep 1
 
 # ------------------------------------------------------------
-# STEP 2: Build Exam Portal
+# STEP 2: Start Backend API (tsx watch — auto-restart on changes)
 # ------------------------------------------------------------
-warn "[2/6] Building Exam Portal..."
-(cd "$PORTAL_DIR" && rm -rf dist && npx vite build --mode production) > /dev/null 2>&1
-echo "  Exam Portal built."
-
-# ------------------------------------------------------------
-# STEP 3: Build Admin Panel
-# ------------------------------------------------------------
-warn "[3/6] Building Admin Panel..."
-(cd "$ADMIN_DIR" && rm -rf dist && npx vite build --mode production) > /dev/null 2>&1
-echo "  Admin Panel built."
-
-# ------------------------------------------------------------
-# STEP 4: Start Backend API
-# ------------------------------------------------------------
-log "[4/6] Starting Backend API (port 3000)..."
-(cd "$BACKEND_DIR" && npx tsx src/index.ts) &
+log "[2/4] Starting Backend API with watch mode (port 3000)..."
+(cd "$BACKEND_DIR" && npx tsx watch src/index.ts) &
 PIDS+=($!)
 sleep 4
 
@@ -100,18 +87,18 @@ for i in $(seq 1 15); do
 done
 
 # ------------------------------------------------------------
-# STEP 5: Serve Exam Portal (production static + API proxy)
+# STEP 3: Start Exam Portal (vite dev server — HMR)
 # ------------------------------------------------------------
-log "[5/6] Serving Exam Portal (port 5174)..."
-(cd "$PORTAL_DIR" && node serve.cjs) &
+log "[3/4] Starting Exam Portal dev server (port 5174, HMR)..."
+(cd "$PORTAL_DIR" && npx vite dev --port 5174 --host) &
 PIDS+=($!)
 sleep 1
 
 # ------------------------------------------------------------
-# STEP 6: Serve Admin Panel (production static + API proxy)
+# STEP 4: Start Admin Panel (vite dev server — HMR)
 # ------------------------------------------------------------
-log "[6/6] Serving Admin Panel (port 5173)..."
-(cd "$ADMIN_DIR" && node serve.cjs) &
+log "[4/4] Starting Admin Panel dev server (port 5173, HMR)..."
+(cd "$ADMIN_DIR" && npx vite dev --port 5173 --host) &
 PIDS+=($!)
 sleep 1
 
@@ -120,7 +107,7 @@ sleep 1
 # ------------------------------------------------------------
 echo ""
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}  ALL SERVICES RUNNING (PRODUCTION)${NC}"
+echo -e "${CYAN}  ALL SERVICES RUNNING (WATCH MODE)${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 echo -e "${WHITE}  EXAM PORTAL (candidates):${NC}"
@@ -145,6 +132,8 @@ echo ""
 echo -e "${CYAN}  PREREQUISITES (must be running):${NC}"
 echo -e "${WHITE}    PostgreSQL:  localhost:5433${NC}"
 echo -e "${WHITE}    Redis:       localhost:6379${NC}"
+echo ""
+echo -e "${YELLOW}  WATCH MODE: Code changes auto-reload (no restart needed)${NC}"
 echo ""
 log "Press Ctrl+C to stop all services."
 

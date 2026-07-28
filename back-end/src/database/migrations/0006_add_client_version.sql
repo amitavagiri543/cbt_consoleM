@@ -1,1 +1,0 @@
-ALTER TABLE "device_registrations" ADD COLUMN "client_version" varchar(50);

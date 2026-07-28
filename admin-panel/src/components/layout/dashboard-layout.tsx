@@ -1,25 +1,25 @@
-import {
-  Activity,
-  BarChart3,
-  Bell,
-  Building2,
-  CheckCircle2,
-  ChevronDown,
-  GraduationCap,
-  Info,
-  LayoutDashboard,
-  LogOut,
-  Monitor,
-  PanelLeft,
-  PanelLeftClose,
-  ScrollText,
-  Settings,
-  ShieldAlert,
-
-  Users,
-  X,
-} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import {
+    Activity,
+    ArrowLeft,
+    BarChart3,
+    Bell,
+    Building2,
+    CheckCircle2,
+    ChevronDown,
+    GraduationCap,
+    Info,
+    LayoutDashboard,
+    LogOut,
+    Monitor,
+    PanelLeft,
+    PanelLeftClose,
+    ScrollText,
+    Settings,
+    ShieldAlert,
+    Users,
+    X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -32,12 +32,12 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
 const navItems = [
@@ -49,7 +49,12 @@ const navItems = [
   { to: "/violations", label: "Violations", icon: ShieldAlert, end: false },
   { to: "/analytics", label: "Analytics", icon: BarChart3, end: false },
   { to: "/audit-logs", label: "Audit Logs", icon: ScrollText, end: false },
-  { to: "/system-settings", label: "System Settings", icon: Settings, end: false },
+  {
+    to: "/system-settings",
+    label: "System Settings",
+    icon: Settings,
+    end: false,
+  },
 ];
 
 const segmentTitles: Record<string, string> = {
@@ -69,17 +74,19 @@ const segmentTitles: Record<string, string> = {
 const segmentSubtitles: Record<string, string> = {
   "": "System overview & real-time examination metrics",
   users: "Manage system administrator users, proctors, and access roles",
-  institutions: "Manage educational institutions, departments, and exam centers",
+  institutions:
+    "Manage educational institutions, departments, and exam centers",
   devices: "Register, monitor, and manage exam client devices",
   "live-monitor": "Real-time active examination sessions & proctoring console",
   results: "Candidate performance, test scores, and grading reports",
   violations: "Security violation alerts and incident proctoring logs",
   analytics: "System performance analytics & examination statistics",
   "audit-logs": "Track system security, authentication, and admin audit events",
-  "system-settings": "Global platform configuration, security rules, and system defaults",
-  exams: "Configure computer-based examinations, subject papers, and question banks",
+  "system-settings":
+    "Global platform configuration, security rules, and system defaults",
+  exams:
+    "Configure computer-based examinations, subject papers, and question banks",
 };
-
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
@@ -93,6 +100,7 @@ export default function DashboardLayout() {
   const setCustomBreadcrumbs = useUIStore((s) => s.setCustomBreadcrumbs);
   const pageHeaderOverride = useUIStore((s) => s.pageHeaderOverride);
   const setPageHeaderOverride = useUIStore((s) => s.setPageHeaderOverride);
+  const backAction = useUIStore((s) => s.backAction);
 
   // Clear custom breadcrumbs and page header override when route pathname changes
   useEffect(() => {
@@ -106,16 +114,18 @@ export default function DashboardLayout() {
   };
 
   const initials = user?.role?.charAt(0).toUpperCase() ?? "A";
-  
+
   // Build full dynamic path segments for navbar breadcrumbs
   const pathSegments = location.pathname.split("/").filter(Boolean);
   const currentSegment = pathSegments[0] ?? "";
-  
+
   const defaultBreadcrumbs = [
     { label: "Console", path: "/" },
     ...pathSegments.map((segment, index) => {
       const path = "/" + pathSegments.slice(0, index + 1).join("/");
-      const title = segmentTitles[segment] ?? (segment.length > 12 ? `#${segment.slice(0, 8)}...` : segment);
+      const title =
+        segmentTitles[segment] ??
+        (segment.length > 12 ? `#${segment.slice(0, 8)}...` : segment);
       return { label: title, path };
     }),
   ];
@@ -124,9 +134,14 @@ export default function DashboardLayout() {
     ? [{ label: "Console", path: "/" }, ...customBreadcrumbs]
     : defaultBreadcrumbs;
 
-  const currentPageTitle = pageHeaderOverride?.title ?? (breadcrumbs[breadcrumbs.length - 1]?.label ?? "Dashboard");
-  const currentPageSubtitle = pageHeaderOverride?.subtitle ?? (segmentSubtitles[currentSegment] ?? "CBE Console Admin Workspace");
-
+  const currentPageTitle =
+    pageHeaderOverride?.title ??
+    breadcrumbs[breadcrumbs.length - 1]?.label ??
+    "Dashboard";
+  const currentPageSubtitle =
+    pageHeaderOverride?.subtitle ??
+    segmentSubtitles[currentSegment] ??
+    "CBE Console Admin Workspace";
 
   interface NotificationItem {
     id: string;
@@ -162,14 +177,19 @@ export default function DashboardLayout() {
     return [];
   };
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>(getSavedNotifications);
+  const [notifications, setNotifications] = useState<NotificationItem[]>(
+    getSavedNotifications,
+  );
   const [removedIds, setRemovedIds] = useState<Set<string>>(getRemovedIds);
 
   // Sync notifications & removed IDs to localStorage immediately
   useEffect(() => {
     try {
       localStorage.setItem(NOTIFS_STORAGE_KEY, JSON.stringify(notifications));
-      localStorage.setItem(REMOVED_NOTIFS_KEY, JSON.stringify(Array.from(removedIds)));
+      localStorage.setItem(
+        REMOVED_NOTIFS_KEY,
+        JSON.stringify(Array.from(removedIds)),
+      );
     } catch (e) {
       console.error(e);
     }
@@ -180,7 +200,6 @@ export default function DashboardLayout() {
     queryKey: ["audit-logs-notifications"],
     queryFn: () => auditLogService.list({ page: 1, pageSize: 10 }),
     staleTime: 60 * 1000,
-    refetchInterval: 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
@@ -209,7 +228,10 @@ export default function DashboardLayout() {
           id: log.id,
           title: actionText,
           message: `${log.userFullName || log.userEmail || "System User"}: ${log.resourceType}${log.resourceId ? ` (#${log.resourceId.slice(0, 6)})` : ""}`,
-          time: new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          time: new Date(log.timestamp).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
           type: isViolation ? "warning" : isSuccess ? "success" : "info",
           read: false,
         });
@@ -242,7 +264,6 @@ export default function DashboardLayout() {
   };
 
   const unreadCount = notifications.filter((item) => !item.read).length;
-
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -308,14 +329,25 @@ export default function DashboardLayout() {
               onClick={toggleSidebar}
               className="h-9 w-9 text-muted-foreground hover:text-foreground"
             >
-              {collapsed ? <PanelLeft className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+              {collapsed ? (
+                <PanelLeft className="h-5 w-5" />
+              ) : (
+                <PanelLeftClose className="h-5 w-5" />
+              )}
             </Button>
-            
+
             {/* Dynamic Full Sub-Path Breadcrumbs */}
             <div className="hidden sm:flex items-center gap-1.5 text-xs font-medium">
               {breadcrumbs.map((crumb, idx) => (
-                <div key={(crumb.path || crumb.label) + idx} className="flex items-center gap-1.5">
-                  {idx > 0 && <span className="text-muted-foreground/40 font-mono">/</span>}
+                <div
+                  key={(crumb.path || crumb.label) + idx}
+                  className="flex items-center gap-1.5"
+                >
+                  {idx > 0 && (
+                    <span className="text-muted-foreground/40 font-mono">
+                      /
+                    </span>
+                  )}
                   {crumb.path && idx < breadcrumbs.length - 1 ? (
                     <NavLink
                       to={crumb.path}
@@ -356,9 +388,14 @@ export default function DashboardLayout() {
               <DropdownMenuContent align="end" className="w-80 sm:w-96 p-0">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border/80 bg-muted/30">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-bold text-foreground">Notifications</h4>
+                    <h4 className="text-sm font-bold text-foreground">
+                      Notifications
+                    </h4>
                     {unreadCount > 0 && (
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0.2">
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] px-1.5 py-0.2"
+                      >
                         {unreadCount} new
                       </Badge>
                     )}
@@ -438,7 +475,10 @@ export default function DashboardLayout() {
             {/* User Profile Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="flex items-center gap-2.5 p-1 px-2 rounded-xl hover:bg-accent/60">
+                <Button
+                  variant="ghost"
+                  className="flex items-center gap-2.5 p-1 px-2 rounded-xl hover:bg-accent/60"
+                >
                   <Avatar className="h-8 w-8 ring-2 ring-primary/20">
                     <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs">
                       {initials}
@@ -458,8 +498,12 @@ export default function DashboardLayout() {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-semibold leading-none">{user?.role ?? "Admin Account"}</p>
-                    <p className="text-xs leading-none text-muted-foreground font-mono">{user?.id}</p>
+                    <p className="text-sm font-semibold leading-none">
+                      {user?.role ?? "Admin Account"}
+                    </p>
+                    <p className="text-xs leading-none text-muted-foreground font-mono">
+                      {user?.id}
+                    </p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -476,17 +520,24 @@ export default function DashboardLayout() {
         </header>
 
         {/* Sticky Prominent Page Header Bar with Title and Subtitle */}
-        <div className="sticky top-0 z-10 flex py-3.5 px-6 sm:px-8 items-center justify-between border-b border-border bg-card shrink-0">
-          <div className="flex flex-col min-w-0 pr-4">
-            <div className="flex items-center gap-2.5">
-              <div className="h-2.5 w-2.5 rounded-full bg-primary shrink-0" />
-              <h1 className="text-xl sm:text-2xl font-black tracking-tight text-foreground truncate">
+        <div className="sticky top-0 z-10 flex py-2.5 px-6 sm:px-8 items-center justify-between border-b border-border bg-card shrink-0">
+          <div className="flex items-center gap-3 min-w-0 pr-4">
+            {backAction && (
+              <button
+                onClick={backAction}
+                className="flex items-center justify-center h-7 w-7 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground shrink-0"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
+            <div className="flex flex-col min-w-0">
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-foreground truncate">
                 {currentPageTitle}
               </h1>
+              <p className="text-[11px] font-medium text-muted-foreground/80 truncate">
+                {currentPageSubtitle}
+              </p>
             </div>
-            <p className="text-xs font-medium text-muted-foreground/80 mt-0.5 truncate pl-5">
-              {currentPageSubtitle}
-            </p>
           </div>
           <div className="hidden md:flex items-center gap-2 text-xs font-semibold shrink-0">
             <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 px-3 py-1 font-mono text-[11px] shadow-2xs">
@@ -495,8 +546,6 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-
-
         {/* Dynamic Route Content Outlet */}
 
         <main className="flex-1 overflow-auto p-6 md:p-8">
@@ -504,10 +553,7 @@ export default function DashboardLayout() {
             <Outlet />
           </div>
         </main>
-
       </div>
     </div>
   );
 }
-
-

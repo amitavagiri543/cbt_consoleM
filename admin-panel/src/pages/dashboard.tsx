@@ -1,14 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity,
-  Building2,
-  ChevronRight,
-  ClipboardList,
-  FileQuestion,
-  GraduationCap,
-  Monitor,
-  ShieldAlert,
-  Users,
+    Activity,
+    Building2,
+    ChevronRight,
+    ClipboardList,
+    FileQuestion,
+    GraduationCap,
+    Monitor,
+    ShieldAlert,
+    Users,
 } from "lucide-react";
 
 import { useNavigate } from "react-router-dom";
@@ -54,7 +54,11 @@ function StatCard({
             {label}
           </p>
           <p className="text-2xl font-black tracking-tight text-foreground mt-1 leading-none">
-            {loading ? <span className="animate-pulse text-muted-foreground">...</span> : value}
+            {loading ? (
+              <span className="animate-pulse text-muted-foreground">...</span>
+            ) : (
+              value
+            )}
           </p>
         </div>
         <ChevronRight className="h-4 w-4 text-muted-foreground/30 transition-all duration-200 group-hover:translate-x-1 group-hover:text-foreground shrink-0" />
@@ -63,14 +67,12 @@ function StatCard({
   );
 }
 
-
 export default function DashboardPage() {
   const navigate = useNavigate();
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: () => dashboardService.getStats(),
-    refetchInterval: 30000,
   });
 
   const { data: recentExams } = useQuery({
@@ -99,15 +101,42 @@ export default function DashboardPage() {
   };
 
   const statusBadges: Record<string, { bg: string; text: string }> = {
-    draft: { bg: "bg-slate-500/10 border-slate-500/30", text: "text-slate-600 dark:text-slate-400" },
-    scheduled: { bg: "bg-sky-500/10 border-sky-500/30", text: "text-sky-600 dark:text-sky-400" },
-    published: { bg: "bg-indigo-500/10 border-indigo-500/30", text: "text-indigo-600 dark:text-indigo-400" },
-    active: { bg: "bg-emerald-500/10 border-emerald-500/30", text: "text-emerald-600 dark:text-emerald-400" },
-    paused: { bg: "bg-amber-500/10 border-amber-500/30", text: "text-amber-600 dark:text-amber-400" },
-    submission_window: { bg: "bg-cyan-500/10 border-cyan-500/30", text: "text-cyan-600 dark:text-cyan-400" },
-    finished: { bg: "bg-zinc-500/10 border-zinc-500/30", text: "text-zinc-600 dark:text-zinc-400" },
-    results_published: { bg: "bg-purple-500/10 border-purple-500/30", text: "text-purple-600 dark:text-purple-400" },
-    archived: { bg: "bg-zinc-400/10 border-zinc-400/30", text: "text-zinc-500" },
+    draft: {
+      bg: "bg-slate-500/10 border-slate-500/30",
+      text: "text-slate-600 dark:text-slate-400",
+    },
+    scheduled: {
+      bg: "bg-sky-500/10 border-sky-500/30",
+      text: "text-sky-600 dark:text-sky-400",
+    },
+    published: {
+      bg: "bg-indigo-500/10 border-indigo-500/30",
+      text: "text-indigo-600 dark:text-indigo-400",
+    },
+    active: {
+      bg: "bg-emerald-500/10 border-emerald-500/30",
+      text: "text-emerald-600 dark:text-emerald-400",
+    },
+    paused: {
+      bg: "bg-amber-500/10 border-amber-500/30",
+      text: "text-amber-600 dark:text-amber-400",
+    },
+    submission_window: {
+      bg: "bg-cyan-500/10 border-cyan-500/30",
+      text: "text-cyan-600 dark:text-cyan-400",
+    },
+    finished: {
+      bg: "bg-zinc-500/10 border-zinc-500/30",
+      text: "text-zinc-600 dark:text-zinc-400",
+    },
+    results_published: {
+      bg: "bg-purple-500/10 border-purple-500/30",
+      text: "text-purple-600 dark:text-purple-400",
+    },
+    archived: {
+      bg: "bg-zinc-400/10 border-zinc-400/30",
+      text: "text-zinc-500",
+    },
   };
 
   return (
@@ -115,7 +144,6 @@ export default function DashboardPage() {
       {/* Stat Cards Grid */}
 
       <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-6">
-
         <StatCard
           label="Total Users"
           value={stats?.users ?? 0}
@@ -285,7 +313,9 @@ export default function DashboardPage() {
           <CardContent className="p-5">
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm font-bold text-foreground">Recent Exams</p>
-              <span className="text-xs font-semibold text-primary hover:underline">Explore Exams →</span>
+              <span className="text-xs font-semibold text-primary hover:underline">
+                Explore Exams →
+              </span>
             </div>
             {(recentExams?.data ?? []).length === 0 ? (
               <p className="text-xs text-muted-foreground py-4 text-center">
@@ -307,12 +337,16 @@ export default function DashboardPage() {
                         <span className="truncate text-sm font-semibold text-foreground">
                           {exam.name}
                         </span>
-                        <Badge variant="outline" className="shrink-0 text-[10px] font-mono">
+                        <Badge
+                          variant="outline"
+                          className="shrink-0 text-[10px] font-mono"
+                        >
                           {exam.code}
                         </Badge>
                       </div>
                       <p className="truncate text-xs text-muted-foreground mt-0.5">
-                        {exam.subjectName ?? "General"} • {exam.durationMinutes} min • {exam.totalMarks} marks
+                        {exam.subjectName ?? "General"} • {exam.durationMinutes}{" "}
+                        min • {exam.totalMarks} marks
                       </p>
                     </div>
                     <ChevronRight className="h-4 w-4 text-muted-foreground/50 shrink-0" />
@@ -329,8 +363,12 @@ export default function DashboardPage() {
         >
           <CardContent className="p-5">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-bold text-foreground">Recent Violations</p>
-              <span className="text-xs font-semibold text-primary hover:underline">View All Alerts →</span>
+              <p className="text-sm font-bold text-foreground">
+                Recent Violations
+              </p>
+              <span className="text-xs font-semibold text-primary hover:underline">
+                View All Alerts →
+              </span>
             </div>
             {(recentViolations?.data ?? []).length === 0 ? (
               <p className="text-xs text-muted-foreground py-4 text-center">
@@ -375,4 +413,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

@@ -45,6 +45,14 @@ const server = http.createServer((req, res) => {
       res.end("Backend unavailable");
     });
 
+    // Propagate client disconnect to backend — critical for SSE close detection.
+    req.on("close", () => {
+      proxyReq.destroy();
+    });
+    res.on("close", () => {
+      proxyReq.destroy();
+    });
+
     req.pipe(proxyReq);
     return;
   }

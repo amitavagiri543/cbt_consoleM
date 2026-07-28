@@ -36,6 +36,20 @@
       "when": 1784586263113,
       "tag": "0004_many_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785243018915,
+      "tag": "0005_glossy_red_ghost",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785244000000,
+      "tag": "0006_fix_railway_missing_objects",
+      "breakpoints": true
     }
   ]
 }

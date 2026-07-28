@@ -199,7 +199,6 @@ export default function LiveMonitorPage() {
 
     eventSource.onerror = () => {
       // SSE connection lost — EventSource auto-reconnects.
-      // Fallback: poll every 5s while disconnected.
     };
 
     return () => {

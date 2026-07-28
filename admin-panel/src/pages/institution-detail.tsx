@@ -1,14 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowLeft,
-  BookOpen,
-  ClipboardList,
-  Loader2,
-  Trophy,
-  Users,
-  UsersRound,
+    ArrowLeft,
+    BookOpen,
+    ClipboardList,
+    Loader2,
+    Trophy,
+    Users,
+    UsersRound,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 
@@ -43,6 +43,7 @@ export default function InstitutionDetailPage() {
 
   const setCustomBreadcrumbs = useUIStore((s) => s.setCustomBreadcrumbs);
   const setPageHeaderOverride = useUIStore((s) => s.setPageHeaderOverride);
+  const setBackAction = useUIStore((s) => s.setBackAction);
 
   const { data: institution, isLoading: instLoading } = useQuery({
     queryKey: ["institutions"],
@@ -95,10 +96,15 @@ export default function InstitutionDetailPage() {
     },
   ];
 
-
   // Publish dynamic full sub-path breadcrumbs and page header override
   useEffect(() => {
-    if (!institution) return;
+    if (!institution) {
+      setCustomBreadcrumbs([
+        { label: "Institutions", path: "/institutions" },
+        { label: "Loading..." },
+      ]);
+      return;
+    }
 
     const crumbs: BreadcrumbItem[] = [
       { label: "Institutions", path: "/institutions" },
@@ -150,6 +156,25 @@ export default function InstitutionDetailPage() {
     setPageHeaderOverride,
   ]);
 
+  const handleBack = useCallback(() => {
+    if (selectedSubject) {
+      setSelectedSubject(null);
+    } else if (batchFolder) {
+      setBatchFolder(null);
+    } else if (selectedBatch) {
+      setSelectedBatch(null);
+    } else if (activeFolder) {
+      setActiveFolder(null);
+    } else {
+      navigate("/institutions");
+    }
+  }, [selectedSubject, batchFolder, selectedBatch, activeFolder, navigate]);
+
+  // Register the back action in the UI store
+  useEffect(() => {
+    setBackAction(handleBack);
+    return () => setBackAction(null);
+  }, [handleBack, setBackAction]);
 
   if (instLoading) {
     return (
@@ -175,34 +200,8 @@ export default function InstitutionDetailPage() {
     );
   }
 
-  const handleBack = () => {
-    if (selectedSubject) {
-      setSelectedSubject(null);
-    } else if (batchFolder) {
-      setBatchFolder(null);
-    } else if (selectedBatch) {
-      setSelectedBatch(null);
-    } else if (activeFolder) {
-      setActiveFolder(null);
-    } else {
-      navigate("/institutions");
-    }
-  };
-
   return (
     <div>
-      {/* Sticky Back button bar */}
-      <div className="sticky top-0 z-10 -mx-6 md:-mx-8 -mt-6 md:-mt-8 px-4 md:px-6 py-1 mb-4 bg-muted/50">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleBack}
-        >
-          <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
-          {!activeFolder ? "Back to Institutions" : "Back"}
-        </Button>
-      </div>
-
       {/* Folder cards view */}
       {!activeFolder && (
         <div className="space-y-6">
@@ -221,12 +220,11 @@ export default function InstitutionDetailPage() {
         </div>
       )}
 
-      {/* Folder content - render actual page components with inline onBack prop */}
+      {/* Folder content - render actual page components */}
       {activeFolder === "batches" && (
         <BatchesPage
           institutionId={id}
           hideHeader
-          onBack={handleBack}
           batchFolder={batchFolder}
           setBatchFolder={setBatchFolder}
           selectedBatch={selectedBatch}
@@ -239,26 +237,19 @@ export default function InstitutionDetailPage() {
         <SubjectsPage
           institutionId={id}
           hideHeader
-          onBack={handleBack}
           onSelectSubject={setSelectedSubject}
         />
       )}
       {activeFolder === "subjects" && selectedSubject && (
-        <QuestionsPage
-          subjectId={selectedSubject.id}
-          hideHeader
-          onBack={handleBack}
-        />
+        <QuestionsPage subjectId={selectedSubject.id} hideHeader />
       )}
       {activeFolder === "exams" && (
         <ExamsListPage institutionId={id} hideHeader />
       )}
       {activeFolder === "candidates" && (
-        <CandidatesPage institutionId={id} hideHeader onBack={handleBack} />
+        <CandidatesPage institutionId={id} hideHeader />
       )}
-      {activeFolder === "results" && (
-        <ResultsPage institutionId={id} />
-      )}
+      {activeFolder === "results" && <ResultsPage institutionId={id} />}
       {activeFolder === "batches" &&
         selectedBatch &&
         batchFolder === "subjects" &&
@@ -267,10 +258,8 @@ export default function InstitutionDetailPage() {
             subjectId={selectedSubject.id}
             batchId={selectedBatch.id}
             hideHeader
-            onBack={handleBack}
           />
         )}
     </div>
   );
-
 }

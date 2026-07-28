@@ -79,7 +79,6 @@ export default function SystemSettingsPage() {
     queryKey: ["health-detailed"],
     queryFn: () => systemService.healthDetailed(),
     enabled: tab === "health",
-    refetchInterval: 5000,
   });
 
   const updateSettingMutation = useMutation({

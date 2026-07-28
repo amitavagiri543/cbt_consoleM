@@ -211,6 +211,7 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
       admitCardNumber: candidate.admitCardNumber ?? "",
       adminContact,
       attemptStatus: existingAttempt?.status ?? null,
+      attemptRemainingTimeSecs: existingAttempt?.remainingTimeSecs ?? null,
       attemptSubmittedAt: existingAttempt?.submittedAt?.toISOString() ?? null,
       sections: sections.map((s) => ({
         id: s.id,

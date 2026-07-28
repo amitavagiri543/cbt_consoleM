@@ -154,6 +154,25 @@ export class SSEManager {
   }
 
   /**
+   * Broadcast to clients across multiple rooms with deduplication.
+   * A client in more than one room receives the event only once.
+   */
+  broadcastToMany(rooms: string[], event: string, data: unknown): number {
+    const seen = new Set<string>();
+    let sent = 0;
+    for (const room of rooms) {
+      const clientIds = this.rooms.get(room);
+      if (!clientIds) continue;
+      for (const clientId of clientIds) {
+        if (seen.has(clientId)) continue;
+        seen.add(clientId);
+        if (this.sendTo(clientId, event, data)) sent++;
+      }
+    }
+    return sent;
+  }
+
+  /**
    * Get clients by user ID — O(1) via index.
    */
   getByUserId(userId: string): SSEClient | undefined {

@@ -102,7 +102,7 @@ export default function CandidateExamList() {
                   margin: 0,
                 }}
               >
-                Welcome, <span style={{ fontWeight: 700 }}>Candidate</span>
+                Welcome, <span style={{ fontWeight: 700 }}>{(() => { try { return JSON.parse(localStorage.getItem("candidateUser") ?? "{}").fullName ?? "Candidate"; } catch { return "Candidate"; } })()}</span>
               </h1>
               <p
                 style={{
@@ -118,18 +118,11 @@ export default function CandidateExamList() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{ textAlign: "right" }}>
-              <p style={{ fontSize: 12, color: "#757575", margin: 0 }}>
-                CBT Exam Platform
+              <p style={{ fontSize: 14, fontWeight: 700, color: "#212121", margin: 0 }}>
+                {(() => { try { return JSON.parse(localStorage.getItem("candidateUser") ?? "{}").fullName ?? "Candidate"; } catch { return "Candidate"; } })()}
               </p>
-              <p
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: "#212121",
-                  marginTop: 2,
-                }}
-              >
-                Session Active
+              <p style={{ fontSize: 12, color: "#757575", marginTop: 2 }}>
+                {(() => { try { return JSON.parse(localStorage.getItem("candidateUser") ?? "{}").admitCardNumber ?? ""; } catch { return ""; } })()}
               </p>
             </div>
             <button

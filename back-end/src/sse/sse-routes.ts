@@ -6,6 +6,7 @@ import { attempts, candidates } from "../database/schemas/index.js";
 import {
     autoPauseAttempt,
     autoResumeAttempt,
+    getRemainingTime,
 } from "../modules/sessions/session-service.js";
 import { verifyToken } from "../services/auth.js";
 import { sseManager } from "./sse-manager.js";
@@ -123,6 +124,11 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
       )
       .limit(1);
 
+    // Hijack the response — we're taking over the raw stream for SSE.
+    // Without this, Fastify's response lifecycle interferes with the
+    // long-lived connection and the "close" event may not fire on disconnect.
+    reply.hijack();
+
     // Set SSE headers
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -153,27 +159,18 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
     // If attempt is paused, auto-resume immediately. The candidate is
     // actively connecting (clicked Start/Resume Exam), so always resume
     // from the frozen remaining time — no admin action needed.
+    // autoResumeAttempt broadcasts session:auto_resumed via broadcastSessionEvent,
+    // so we don't need to send it again here (would cause duplicate toasts).
     if (activeAttempt?.status === "paused") {
-      const resumed = await autoResumeAttempt(activeAttempt.id);
-      if (resumed) {
-        sseManager.sendTo(client.id, "session:auto_resumed", {
-          attemptId: activeAttempt.id,
-          remainingTimeSecs: resumed.remainingTimeSecs,
-          serverTime: Date.now(),
-        });
-      } else {
-        // Only happens if the attempt is no longer paused (race condition
-        // or already resumed by admin) — just confirm current state.
-        sseManager.sendTo(client.id, "session:active", {
-          attemptId: activeAttempt.id,
-          serverTime: Date.now(),
-        });
-      }
+      await autoResumeAttempt(activeAttempt.id);
     } else if (activeAttempt?.status === "in_progress") {
       // Refresh active key
       await redis.set(`attempt:active:${activeAttempt.id}`, "1", "EX", 120);
+      // Send remaining time so the client can sync its countdown
+      const { remainingSecs } = await getRemainingTime(activeAttempt.id);
       sseManager.sendTo(client.id, "session:active", {
         attemptId: activeAttempt.id,
+        remainingTimeSecs: remainingSecs,
         serverTime: Date.now(),
       });
     } else if (activeAttempt?.status === "terminated") {
@@ -203,9 +200,6 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
         }
       }
     });
-
-    // Don't let Fastify send a response — we're streaming
-    return reply;
   });
 
   // ─── GET /sse/admin — Admin SSE stream ──────────────────────────────
@@ -235,6 +229,9 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
     if (!examBatchId) {
       return reply.code(400).send({ error: "examBatchId is required" });
     }
+
+    // Hijack the response for SSE streaming
+    reply.hijack();
 
     // Set SSE headers
     reply.raw.writeHead(200, {
@@ -269,8 +266,6 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
     request.raw.on("close", () => {
       sseManager.remove(client.id);
     });
-
-    return reply;
   });
 };
 

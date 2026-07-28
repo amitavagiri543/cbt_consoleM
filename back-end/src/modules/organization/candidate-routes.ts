@@ -1,11 +1,12 @@
 import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import ExcelJS from "exceljs";
 import { type FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { db } from "../../database/db.js";
 import {
-    batchCandidates,
-    candidates,
-    users,
+  batchCandidates,
+  candidates,
+  users,
 } from "../../database/schemas/index.js";
 import { requireRole } from "../../middleware/rbac.js";
 
@@ -177,6 +178,19 @@ const candidateRoutes: FastifyPluginAsync = async (app) => {
       phone,
     } = parsed.data;
 
+    // Check for duplicate admit card number before inserting
+    if (admitCardNumber) {
+      const [existing] = await db
+        .select({ id: candidates.id })
+        .from(candidates)
+        .where(eq(candidates.admitCardNumber, admitCardNumber))
+        .limit(1);
+      if (existing)
+        return reply.code(409).send({
+          error: `Admit card number "${admitCardNumber}" is already assigned to another candidate`,
+        });
+    }
+
     // Password = DOB in ddmmyyyy format
     const { hash } = await import("@node-rs/argon2");
     const passwordHash = await hash(dateOfBirth);
@@ -272,6 +286,24 @@ const candidateRoutes: FastifyPluginAsync = async (app) => {
       dateOfBirth,
       isActive,
     } = parsed.data;
+
+    // Check for duplicate admit card number if it's being updated
+    if (admitCardNumber !== undefined && admitCardNumber) {
+      const [existing] = await db
+        .select({ id: candidates.id })
+        .from(candidates)
+        .where(
+          and(
+            eq(candidates.admitCardNumber, admitCardNumber),
+            sql`${candidates.id} != ${id}`,
+          ),
+        )
+        .limit(1);
+      if (existing)
+        return reply.code(409).send({
+          error: `Admit card number "${admitCardNumber}" is already assigned to another candidate`,
+        });
+    }
 
     // Single transaction: update candidate + user, then return joined result
     const row = await db.transaction(async (tx) => {
@@ -433,12 +465,47 @@ const candidateRoutes: FastifyPluginAsync = async (app) => {
 
     // Deduplicate by email within the payload
     const seenEmails = new Set<string>();
+    // Also check for duplicate admit card numbers within the payload
+    const seenAdmitCards = new Set<string>();
+    const duplicateAdmitCards: string[] = [];
     const uniqueRows = importRows.filter((r) => {
       const lower = r.email.toLowerCase();
       if (seenEmails.has(lower)) return false;
       seenEmails.add(lower);
+      if (r.admitCardNumber) {
+        if (seenAdmitCards.has(r.admitCardNumber)) {
+          duplicateAdmitCards.push(r.admitCardNumber);
+          return false;
+        }
+        seenAdmitCards.add(r.admitCardNumber);
+      }
       return true;
     });
+
+    if (duplicateAdmitCards.length > 0) {
+      return reply.code(409).send({
+        error: `Duplicate admit card numbers within the file: ${duplicateAdmitCards.join(", ")}`,
+      });
+    }
+
+    // Check for admit card numbers that already exist in the database
+    const admitCardNumbers = uniqueRows
+      .map((r) => r.admitCardNumber)
+      .filter((v): v is string => !!v);
+    if (admitCardNumbers.length > 0) {
+      const existingCandidates = await db
+        .select({ admitCardNumber: candidates.admitCardNumber })
+        .from(candidates)
+        .where(inArray(candidates.admitCardNumber, admitCardNumbers));
+      if (existingCandidates.length > 0) {
+        const taken = existingCandidates
+          .map((c) => c.admitCardNumber)
+          .join(", ");
+        return reply.code(409).send({
+          error: `Admit card numbers already in use: ${taken}`,
+        });
+      }
+    }
 
     // Hash each candidate's password (DOB) BEFORE transaction
     const { hash } = await import("@node-rs/argon2");
@@ -447,6 +514,14 @@ const candidateRoutes: FastifyPluginAsync = async (app) => {
         ...r,
         passwordHash: await hash(r.dateOfBirth),
       })),
+    );
+
+    // Build lookup maps BEFORE transaction (avoid initialization order bugs)
+    const emailToRow = new Map(
+      uniqueRows.map((r) => [r.email.toLowerCase(), r]),
+    );
+    const emailToHash = new Map(
+      rowsWithHash.map((r) => [r.email.toLowerCase(), r.passwordHash]),
     );
 
     // Atomic bulk insert with ON CONFLICT DO NOTHING — eliminates race conditions
@@ -470,14 +545,6 @@ const candidateRoutes: FastifyPluginAsync = async (app) => {
       if (createdUsers.length === 0) {
         return { imported: 0, skipped: uniqueRows.length };
       }
-
-      // Build lookup for optional fields (avoid O(n²) find calls)
-      const emailToRow = new Map(
-        uniqueRows.map((r) => [r.email.toLowerCase(), r]),
-      );
-      const emailToHash = new Map(
-        rowsWithHash.map((r) => [r.email.toLowerCase(), r.passwordHash]),
-      );
 
       const candidateRows = createdUsers.map((u) => ({
         userId: u.id,
@@ -507,15 +574,76 @@ const candidateRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  /* ----- GET /candidates/template — download CSV template ----- */
+  /* ----- GET /candidates/template — download XLSX template ----- */
   app.get("/template", async (_request, reply) => {
-    const csv = "email,fullName,dateOfBirth,rollNumber,admitCardNumber,phone\n";
-    reply.header("Content-Type", "text/csv");
-    reply.header(
-      "Content-Disposition",
-      'attachment; filename="candidates_template.csv"',
-    );
-    return reply.send(csv);
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet("Candidates");
+
+    ws.columns = [
+      { header: "email", key: "email", width: 30 },
+      { header: "fullName", key: "fullName", width: 25 },
+      { header: "dateOfBirth", key: "dateOfBirth", width: 15 },
+      { header: "rollNumber", key: "rollNumber", width: 15 },
+      { header: "admitCardNumber", key: "admitCardNumber", width: 18 },
+      { header: "phone", key: "phone", width: 15 },
+    ];
+
+    // Style header row
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF4472C4" },
+    };
+    ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+
+    // No sample rows — user fills in their own data
+    // dateOfBirth cells in column C should be entered as text to preserve leading zeros
+
+    // Instructions sheet
+    const instr = workbook.addWorksheet("Instructions");
+    instr.getColumn(1).width = 25;
+    instr.getColumn(2).width = 70;
+    instr.addRow(["Field", "Description"]);
+    instr.addRow(["email", "Valid email address (required). Must be unique."]);
+    instr.addRow([
+      "fullName",
+      "Full name of the candidate (required, max 255 chars).",
+    ]);
+    instr.addRow([
+      "dateOfBirth",
+      "Date of birth in ddmmyyyy format, e.g. 05112000 for 5 Nov 2000 (required). Enter as text to preserve leading zeros.",
+    ]);
+    instr.addRow(["rollNumber", "Roll number (optional, max 50 chars)."]);
+    instr.addRow([
+      "admitCardNumber",
+      "Admit card number (optional, max 50 chars).",
+    ]);
+    instr.addRow(["phone", "Phone number (optional, max 20 chars)."]);
+    instr.addRow([]);
+    instr.addRow(["Notes:"]);
+    instr.addRow([
+      "- dateOfBirth is used as the default password for the candidate.",
+    ]);
+    instr.addRow(["- Duplicate emails within the file will be skipped."]);
+    instr.addRow([
+      "- Already registered emails will be skipped (no overwrite).",
+    ]);
+    instr.addRow(["- Maximum 500 candidates per upload."]);
+    instr.getRow(1).font = { bold: true };
+    instr.getRow(9).font = { bold: true };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return reply
+      .header(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      )
+      .header(
+        "Content-Disposition",
+        'attachment; filename="candidates_template.xlsx"',
+      )
+      .send(Buffer.from(buffer));
   });
 
   /* ----- POST /candidates/assign — assign candidates to a batch ----- */

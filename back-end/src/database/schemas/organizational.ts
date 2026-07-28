@@ -118,7 +118,7 @@ export const candidates = pgTable(
     batchId: uuid("batch_id").references(() => batches.id),
     institutionId: uuid("institution_id").references(() => institutions.id),
     rollNumber: varchar("roll_number", { length: 50 }),
-    admitCardNumber: varchar("admit_card_number", { length: 50 }),
+    admitCardNumber: varchar("admit_card_number", { length: 50 }).unique(),
     photoUrl: varchar("photo_url", { length: 500 }),
     dateOfBirth: varchar("date_of_birth", { length: 8 }),
     isActive: boolean("is_active").notNull().default(true),

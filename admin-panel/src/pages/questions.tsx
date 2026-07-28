@@ -602,7 +602,7 @@ export default function QuestionsPage({
               Deactivate Selected ({table.getSelectedRowModel().rows.length})
             </Button>
           )}
-          <div className="relative">
+          <div className="relative z-20">
             <Button
               variant="outline"
               size="sm"
@@ -612,7 +612,7 @@ export default function QuestionsPage({
               Download Template
             </Button>
             {templateMenuOpen && (
-              <div className="absolute right-0 top-full mt-1 z-10 rounded-md border border-border bg-popover shadow-md w-48">
+              <div className="absolute right-0 top-full mt-1 z-50 rounded-md border border-border bg-popover shadow-md w-48">
                 <button
                   className="flex w-full items-center px-3 py-2 text-sm hover:bg-accent"
                   onClick={() => {

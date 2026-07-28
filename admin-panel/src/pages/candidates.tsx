@@ -432,21 +432,23 @@ export default function CandidatesPage({
 
   const totalPages = data ? Math.ceil(data.total / pageSize) : 1;
 
-  const handleDownloadTemplate = () => {
-    const headers =
-      "email,fullName,dateOfBirth,rollNumber,admitCardNumber,phone\n";
-    const blob = new Blob([headers], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.style.display = "none";
-    a.href = url;
-    a.setAttribute("download", "candidates_template.csv");
-    document.body.appendChild(a);
-    a.click();
-    window.setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 2000);
+  const handleDownloadTemplate = async () => {
+    try {
+      const blob = await candidateService.downloadTemplate();
+      const url = URL.createObjectURL(blob as unknown as Blob);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = url;
+      a.setAttribute("download", "candidates_template.xlsx");
+      document.body.appendChild(a);
+      a.click();
+      window.setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 2000);
+    } catch {
+      toast.error("Failed to download template");
+    }
   };
 
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
@@ -475,7 +477,9 @@ export default function CandidatesPage({
                 row["dob"] ??
                 row["DOB"] ??
                 "",
-            ).trim(),
+            )
+              .trim()
+              .padStart(8, "0"),
             admitCardNumber: String(
               row["admitCardNumber"] ??
                 row["Admit Card"] ??
@@ -602,7 +606,7 @@ export default function CandidatesPage({
             <>
               <input
                 type="file"
-                accept=".csv,.xlsx,.xls"
+                accept=".xlsx,.xls"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
                 className="hidden"
@@ -632,7 +636,7 @@ export default function CandidatesPage({
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <FileSpreadsheet className="mr-2 h-4 w-4" />
-                    Bulk Add (CSV / Excel)
+                    Bulk Add (Excel)
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1043,7 +1047,7 @@ export default function CandidatesPage({
           }
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Bulk Import Candidates</DialogTitle>
           </DialogHeader>
@@ -1086,7 +1090,7 @@ export default function CandidatesPage({
               </select>
             </div>
             {parsedRows.length > 0 && (
-              <div className="max-h-[200px] overflow-y-auto rounded-md border border-border">
+              <div className="max-h-[300px] overflow-y-auto rounded-md border border-border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1119,8 +1123,8 @@ export default function CandidatesPage({
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Supported formats: CSV, XLSX, XLS. Required columns: email,
-              fullName, admitCardNumber. Optional: rollNumber, phone.
+              Supported formats: XLSX, XLS. Required columns: email, fullName,
+              dateOfBirth. Optional: rollNumber, admitCardNumber, phone.
             </p>
           </div>
           <DialogFooter>

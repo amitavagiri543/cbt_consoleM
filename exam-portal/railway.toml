@@ -1,7 +1,2 @@
 [deploy]
 rootDir = "exam-portal"
-healthcheckPath = "/examportal/"
-healthcheckTimeout = 30
-
-[deploy.envs]
-BACKEND_URL = "${{cbe-backend.RAILWAY_PUBLIC_DOMAIN}}"
