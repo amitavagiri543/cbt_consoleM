@@ -8,7 +8,7 @@ import {
     timestamp,
     unique,
     uuid,
-    varchar
+    varchar,
 } from "drizzle-orm/pg-core";
 import { cognitiveLevelEnum, questionTypeEnum } from "./enums.js";
 import { batches, institutions, users } from "./organizational.js";
@@ -93,7 +93,6 @@ export const questions = pgTable(
     contentJson: jsonb("content_json").notNull(),
     mediaUrlsJson: jsonb("media_urls_json"),
     solutionJson: jsonb("solution_json"),
-    isActive: boolean("is_active").notNull().default(true),
     version: integer("version").notNull().default(1),
     createdBy: uuid("created_by")
       .notNull()

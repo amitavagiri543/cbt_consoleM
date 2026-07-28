@@ -12,7 +12,6 @@ export const questionsService = {
     pageSize?: number;
     subjectId?: string;
     type?: string;
-    isActive?: boolean;
     search?: string;
   }) => api.get<unknown, PaginatedResponse<Question>>("/questions", { params }),
 

@@ -66,7 +66,6 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   subjectId: z.string().uuid().optional(),
   type: z.string().optional(),
-  isActive: z.coerce.boolean().optional(),
   search: z.string().optional(),
 });
 
@@ -77,14 +76,12 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
     async (request) => {
       const parsed = listQuerySchema.safeParse(request.query);
       if (!parsed.success) return { error: "Invalid query parameters" };
-      const { page, pageSize, subjectId, type, isActive, search } = parsed.data;
+      const { page, pageSize, subjectId, type, search } = parsed.data;
       const offset = (page - 1) * pageSize;
 
       const conditions: ReturnType<typeof eq>[] = [];
       if (subjectId) conditions.push(eq(questions.subjectId, subjectId));
       if (type) conditions.push(eq(questions.type, type as never));
-      if (isActive !== undefined)
-        conditions.push(eq(questions.isActive, isActive));
       if (search)
         conditions.push(
           ilike(sql`CAST(${questions.contentJson} AS TEXT)`, `%${search}%`),

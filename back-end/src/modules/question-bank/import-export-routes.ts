@@ -26,7 +26,6 @@ interface ExportQuestionRow {
   contentJson: Record<string, unknown>;
   mediaUrlsJson: string[] | null;
   solutionJson: { text?: string; explanation?: string } | null;
-  isActive: boolean;
   version: number;
   options: { optionText: string; isCorrect: boolean; displayOrder: number }[];
   tags: string[];
@@ -112,7 +111,6 @@ async function fetchQuestionsForExport(filters: {
     contentJson: r.contentJson as Record<string, unknown>,
     mediaUrlsJson: r.mediaUrlsJson as string[] | null,
     solutionJson: r.solutionJson as ExportQuestionRow["solutionJson"],
-    isActive: r.isActive,
     version: r.version,
     options: optionsMap.get(r.id) ?? [],
     tags: tagsMap.get(r.id) ?? [],
@@ -358,7 +356,6 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
           { header: "Solution", key: "solution", width: 50 },
           { header: "Explanation", key: "explanation", width: 50 },
           { header: "Tags", key: "tags", width: 30 },
-          { header: "Active", key: "isActive", width: 8 },
         ];
 
         ws.getRow(1).font = { bold: true };
@@ -386,7 +383,6 @@ const importExportRoutes: FastifyPluginAsync = async (app) => {
             solution: solutionText,
             explanation,
             tags: r.tags.join(", "),
-            isActive: r.isActive ? "Yes" : "No",
           });
         }
 
