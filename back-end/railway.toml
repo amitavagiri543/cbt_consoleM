@@ -1,5 +1,4 @@
 [deploy]
-rootDir = "back-end"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 
