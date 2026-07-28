@@ -851,6 +851,8 @@ const examRoutes: FastifyPluginAsync = async (app) => {
     for (const worksheet of workbook.worksheets) {
       const sectionName = worksheet.name.trim();
       if (!sectionName) continue;
+      // Skip Instructions tab
+      if (sectionName.toLowerCase() === "instructions") continue;
 
       // Parse headers from row 1
       const headers: string[] = [];
