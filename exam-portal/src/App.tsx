@@ -10,7 +10,7 @@ const CandidateExamPage = lazy(() => import("./pages/exam"));
 function CandidateProtectedRoute({ children }: { children: React.ReactNode }) {
   const hasToken = !!localStorage.getItem("candidateAccessToken");
   if (!hasToken) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
   return <>{children}</>;
 }
@@ -28,7 +28,7 @@ export default function App() {
         }
       >
         <Routes>
-          <Route path="/login" element={<CandidateLogin />} />
+          <Route path="/" element={<CandidateLogin />} />
           <Route
             path="/exams"
             element={
@@ -45,7 +45,7 @@ export default function App() {
               </CandidateProtectedRoute>
             }
           />
-          <Route path="*" element={<Navigate to="/login" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </>

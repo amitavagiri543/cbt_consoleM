@@ -11,7 +11,7 @@ RUN npm run build
 # --- Runtime: nginx to serve static files ---
 FROM nginx:alpine
 
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/dist /usr/share/nginx/html/examportal
 
 # Entrypoint script to template nginx config with BACKEND_URL at runtime
 RUN cat > /docker-entrypoint-railway.sh <<'ENTRY_EOF'
@@ -20,10 +20,17 @@ set -e
 
 BACKEND_URL="${BACKEND_URL:-http://cbe-backend:3000}"
 
+# Parse BACKEND_URL into scheme, host, port
+SCHEME=$(echo "$BACKEND_URL" | sed -n 's/^\(http[s]\?\):\/\/.*/\1/p')
+HOSTPORT=$(echo "$BACKEND_URL" | sed -n 's/^http[s]\?:\/\/\([^/]*\).*/\1/p')
+HOST=$(echo "$HOSTPORT" | cut -d: -f1)
+PORT=$(echo "$HOSTPORT" | cut -d: -f2)
+PORT="${PORT:-80}"
+
 cat > /etc/nginx/conf.d/default.conf <<NGINX_EOF
 server {
-  listen 80;
-  root /usr/share/nginx/html;
+  listen \${PORT:-80};
+  root /usr/share/nginx/html/examportal;
   index index.html;
 
   location /api {

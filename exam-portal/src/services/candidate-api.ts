@@ -24,8 +24,15 @@ candidateApi.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("candidateAccessToken");
       localStorage.removeItem("candidateRefreshToken");
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
+      localStorage.removeItem("candidateUser");
+      // Clear all attempt state so the next candidate starts clean
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith("exam_attempt_")) {
+          localStorage.removeItem(key);
+        }
+      }
+      if (!window.location.pathname.endsWith("/examportal/")) {
+        window.location.href = "/examportal/";
       }
     }
     return Promise.reject(error);

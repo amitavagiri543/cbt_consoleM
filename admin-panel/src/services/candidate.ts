@@ -92,12 +92,6 @@ export const candidateService = {
       deviceFingerprint,
     }),
 
-  heartbeat: (deviceFingerprint?: string) => {
-    const headers: Record<string, string> = {};
-    if (deviceFingerprint) headers["x-device-fp"] = deviceFingerprint;
-    return candidateApi.post("/candidate/heartbeat", {}, { headers });
-  },
-
   getExams: () =>
     candidateApi.get<unknown, CandidateExam[]>("/candidate/exams"),
 

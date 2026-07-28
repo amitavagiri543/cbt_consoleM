@@ -8,7 +8,7 @@ import swaggerUi from "@fastify/swagger-ui";
 import Fastify from "fastify";
 import { env } from "./config/env.js";
 import { closePool, getPoolStats } from "./database/db.js";
-import { closeRedis } from "./database/redis.js";
+import { closeRedis, redis } from "./database/redis.js";
 import analyticsRoutes from "./modules/analytics/analytics-routes.js";
 import authRoutes from "./modules/auth/routes.js";
 import candidateExamRoutes from "./modules/candidate/candidate-exam-routes.js";
@@ -39,6 +39,7 @@ import {
     startTimerScheduler,
     stopTimerScheduler,
 } from "./services/timer-scheduler.js";
+import sseRoutes from "./sse/sse-routes.js";
 import websocketPlugin from "./websocket/server.js";
 
 const app = Fastify({
@@ -66,11 +67,24 @@ app.register(cors, {
 });
 app.register(helmet);
 app.register(compress, {
-  global: true,
+  global: false, // Don't compress globally — SSE must not be buffered
   encodings: ["gzip", "deflate"],
-  threshold: 1024, // Only compress responses > 1KB
+  threshold: 1024,
 });
-app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
+app.register(rateLimit, {
+  max: 1000,
+  timeWindow: "1 minute",
+  // Exclude SSE endpoints from rate limiting — they're long-lived connections
+  keyGenerator: (request) => {
+    if (
+      request.url.startsWith("/sse/") ||
+      request.url.startsWith("/api/sse/")
+    ) {
+      return `sse:${request.ip}`;
+    }
+    return request.ip;
+  },
+});
 app.register(multipart, {
   limits: { fileSize: 100 * 1024 * 1024 },
 });
@@ -205,6 +219,23 @@ await app.register(
         } catch {
           return reply.code(401).send({ error: "Invalid access token" });
         }
+        // Single-session enforcement for candidates: check the persistent
+        // active-JTI key (7-day TTL). If a newer login has overwritten it,
+        // this (old) token is rejected on ALL requests. Unlike the session
+        // lock (which has a 900s TTL and can expire), this key persists
+        // until the next login or explicit logout — so the old session
+        // stays killed.
+        if (request.user.role === "candidate") {
+          const activeJti = await redis.get(
+            `session:active_jti:${request.user.sub}`,
+          );
+          if (activeJti && activeJti !== request.user.jti) {
+            return reply.code(401).send({
+              error: "Session taken over by another login",
+              code: "SESSION_TAKEN_OVER",
+            });
+          }
+        }
       });
       await protectedScope.register(usersRoutes, { prefix: "/users" });
       await protectedScope.register(institutionsRoutes, {
@@ -250,6 +281,18 @@ await app.register(async (protectedScope) => {
     } catch {
       return reply.code(401).send({ error: "Invalid access token" });
     }
+    // Single-session enforcement for candidates (same as /api/v1 scope)
+    if (request.user.role === "candidate") {
+      const activeJti = await redis.get(
+        `session:active_jti:${request.user.sub}`,
+      );
+      if (activeJti && activeJti !== request.user.jti) {
+        return reply.code(401).send({
+          error: "Session taken over by another login",
+          code: "SESSION_TAKEN_OVER",
+        });
+      }
+    }
   });
   await protectedScope.register(usersRoutes, { prefix: "/api/users" });
   await protectedScope.register(institutionsRoutes, {
@@ -293,6 +336,10 @@ await app.register(async (protectedScope) => {
 });
 
 await app.register(websocketPlugin);
+// SSE routes — auth handled internally (token via query param).
+// Registered at /sse (direct) and /api/sse (proxied via vite /api proxy).
+await app.register(sseRoutes, { prefix: "/sse" });
+await app.register(sseRoutes, { prefix: "/api/sse" });
 
 app.addHook("onClose", async () => {
   stopTimerScheduler();

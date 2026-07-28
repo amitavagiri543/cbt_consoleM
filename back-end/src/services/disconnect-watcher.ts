@@ -1,22 +1,31 @@
+import { eq } from "drizzle-orm";
 import type { Redis } from "ioredis";
+import { db } from "../database/db.js";
 import { redis } from "../database/redis.js";
+import { attempts } from "../database/schemas/index.js";
 import { autoPauseAttempt } from "../modules/sessions/session-service.js";
 import { roomManager } from "../websocket/rooms.js";
 
 const KEYS_PREFIX = "__keyevent@0__:expired";
-const ACTIVE_KEY_TTL = 45;
+const ACTIVE_KEY_TTL = 120;
 let subscriber: Redis | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start the disconnect watcher.
  *
- * Enables Redis keyspace notifications for expired keys, then subscribes
- * to detect when `attempt:active:<id>` keys expire (meaning the candidate's
- * client stopped sending heartbeats).
+ * With SSE, the primary disconnect detection is the SSE connection close
+ * handler (instant auto-pause when the candidate's tab closes). This watcher
+ * is a safety net for edge cases where the SSE close event doesn't fire:
+ * - Server crash (SSE connections dropped without close event)
+ * - Redis flush (active keys lost)
+ * - Network partition (SSE close event lost)
  *
- * As a fallback, also polls every 30s for in_progress attempts whose active
- * key has expired (in case keyspace notifications are not configured).
+ * Method 1: Redis keyspace notifications — detects `attempt:active:<id>`
+ * key expiry instantly (when keyspace notifications are enabled).
+ *
+ * Method 2: Fallback poller — queries the DB every 30s for in_progress
+ * attempts whose active key has disappeared.
  */
 export async function startDisconnectWatcher(): Promise<void> {
   // Enable Redis keyspace notifications for expired events (Ex)
@@ -34,18 +43,13 @@ export async function startDisconnectWatcher(): Promise<void> {
   });
 
   subscriber.on("message", (_channel, message) => {
-    // message is the expired key name (without prefix, since ioredis strips it)
     const match = message.match(/^attempt:active:(.+)$/);
     if (!match) return;
     const attemptId = match[1];
-    handleAutoPause(
-      attemptId,
-      "Client heartbeat expired (keyspace notification)",
-    );
+    handleAutoPause(attemptId, "Active key expired (keyspace notification)");
   });
 
-  // Method 2: Fallback poller — checks every 30s for in_progress attempts
-  // whose active key has disappeared
+  // Method 2: Fallback poller — safety net (SSE handles primary detection)
   pollTimer = setInterval(async () => {
     try {
       await pollForExpiredAttempts();
@@ -74,8 +78,9 @@ async function handleAutoPause(
   reason: string,
 ): Promise<void> {
   const result = await autoPauseAttempt(attemptId, reason);
+  // autoPauseAttempt already broadcasts via SSE (broadcastSessionEvent).
+  // Here we only broadcast to WebSocket clients (legacy/WS-connected admins).
   if (result) {
-    // Notify any connected clients (e.g. admin monitor) about the auto-pause
     roomManager.broadcast(`attempt:${attemptId}`, {
       type: "session:paused",
       attemptId,
@@ -94,35 +99,65 @@ async function handleAutoPause(
 }
 
 /**
- * Fallback: scan for in_progress attempts and check if their active key exists.
- * This catches disconnects even if Redis keyspace notifications are not enabled.
+ * Fallback: query the database for all in_progress attempts and check if
+ * their `attempt:active:<id>` key still exists in Redis. If the key has
+ * expired, auto-pause the attempt.
+ *
+ * This is a safety net — the primary disconnect detection is the SSE
+ * connection close handler. This poller catches edge cases where the SSE
+ * close event doesn't fire (server crash, Redis flush, network partition).
  */
 async function pollForExpiredAttempts(): Promise<void> {
-  // Get all active keys to check which attempts are still alive
-  const activeKeys = await redis.keys("attempt:active:*");
-  const activeAttemptIds = new Set(
-    activeKeys.map((k) => k.replace(/^.*?attempt:active:/, "")),
-  );
+  // Get all in_progress attempts from the database
+  const inProgressAttempts = await db
+    .select({ id: attempts.id })
+    .from(attempts)
+    .where(eq(attempts.status, "in_progress"));
 
-  // Check all in_progress attempts via WebSocket room metadata
-  const wsAttemptIds = new Set<string>();
-  for (const socket of roomManager.allSockets()) {
-    const meta = roomManager.getMeta(socket);
-    if (meta?.attemptId) {
-      wsAttemptIds.add(meta.attemptId);
+  if (inProgressAttempts.length === 0) return;
+
+  const attemptIds = inProgressAttempts.map((a) => a.id);
+
+  // Check which ones still have an active key in Redis (pipeline = 1 round-trip)
+  const pipeline = redis.pipeline();
+  for (const id of attemptIds) {
+    pipeline.exists(`attempt:active:${id}`);
+  }
+  const results = await pipeline.exec();
+
+  // Any attempt whose active key is missing should be auto-paused
+  for (let i = 0; i < attemptIds.length; i++) {
+    const exists = results?.[i]?.[1] as number;
+    if (!exists) {
+      handleAutoPause(attemptIds[i], "Active key expired (safety-net poller)");
     }
   }
 
-  // For active keys that have no WS connection and are in_progress,
-  // the key will expire naturally and be caught by the keyspace subscriber.
-  // This poller is a backup for when keyspace notifications aren't configured.
-  // We check if any active key has already expired by looking at attempts
-  // that have WS connections but no active key.
-  for (const attemptId of wsAttemptIds) {
-    if (!activeAttemptIds.has(attemptId)) {
-      // The active key expired but WS is still connected — refresh it
-      // (the client may have missed a heartbeat cycle)
-      await redis.set(`attempt:active:${attemptId}`, "1", "EX", ACTIVE_KEY_TTL);
+  // Refresh active keys for WS-connected attempts that are missing one
+  // (edge case: client missed a heartbeat cycle but is still connected via WS)
+  const wsAttemptIds: string[] = [];
+  for (const socket of roomManager.allSockets()) {
+    const meta = roomManager.getMeta(socket);
+    if (meta?.attemptId) {
+      wsAttemptIds.push(meta.attemptId);
+    }
+  }
+  if (wsAttemptIds.length > 0) {
+    const wsPipeline = redis.pipeline();
+    for (const id of wsAttemptIds) {
+      wsPipeline.exists(`attempt:active:${id}`);
+    }
+    const wsResults = await wsPipeline.exec();
+    for (let i = 0; i < wsAttemptIds.length; i++) {
+      const exists = wsResults?.[i]?.[1] as number;
+      if (!exists) {
+        await redis.set(
+          `attempt:active:${wsAttemptIds[i]}`,
+          "1",
+          "EX",
+          ACTIVE_KEY_TTL,
+        );
+      }
     }
   }
 }

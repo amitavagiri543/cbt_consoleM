@@ -1,0 +1,9 @@
+[deploy]
+startCommand = "sh docker-entrypoint.sh"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+
+[deploy.envs]
+NODE_ENV = "production"
+PORT = "3000"
+HOST = "0.0.0.0"

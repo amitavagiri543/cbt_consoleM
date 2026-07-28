@@ -17,6 +17,53 @@ import {
     cancelAutoSubmit,
     scheduleAutoSubmit,
 } from "../../services/timer-scheduler.js";
+import { sseManager } from "../../sse/sse-manager.js";
+
+/**
+ * Broadcast a session status change via SSE to:
+ * 1. The candidate's attempt room (so the candidate gets notified)
+ * 2. The exam batch room (so admin monitors get notified)
+ *
+ * Uses an in-memory cache for attemptId → examBatchId to avoid a DB query
+ * on every broadcast (critical for 500+ concurrent connections).
+ */
+const attemptBatchCache = new Map<string, string>();
+
+/** Clean up cache entry for an attempt (call on submit/terminate). */
+function clearAttemptBatchCache(attemptId: string): void {
+  attemptBatchCache.delete(attemptId);
+}
+
+async function broadcastSessionEvent(
+  attemptId: string,
+  event: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const payload = { ...data, attemptId, serverTime: Date.now() };
+
+  // Broadcast to the attempt room (candidate)
+  sseManager.broadcast(`attempt:${attemptId}`, event, payload);
+
+  // Look up examBatchId from cache, fall back to DB
+  let examBatchId = attemptBatchCache.get(attemptId);
+  if (!examBatchId) {
+    const [attempt] = await db
+      .select({ examBatchId: attempts.examBatchId })
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .limit(1);
+    examBatchId = attempt?.examBatchId ?? undefined;
+    if (examBatchId) {
+      attemptBatchCache.set(attemptId, examBatchId);
+      // Clean up cache after 1 hour to prevent unbounded growth
+      setTimeout(() => attemptBatchCache.delete(attemptId), 3_600_000);
+    }
+  }
+
+  if (examBatchId) {
+    sseManager.broadcast(`examBatch:${examBatchId}`, event, payload);
+  }
+}
 
 type AttemptStatus =
   | "not_started"
@@ -149,8 +196,8 @@ export async function startOrResumeAttempt(opts: {
     const expiryMs = now + remainingTimeSecs * 1000;
     await scheduleAutoSubmit(a.id, a.candidateId, expiryMs);
 
-    // Set active key for disconnect detection (45s TTL, refreshed by heartbeat every 30s)
-    await redis.set(`attempt:active:${a.id}`, "1", "EX", 45);
+    // Set active key for disconnect detection (45s TTL, refreshed by SSE)
+    await redis.set(`attempt:active:${a.id}`, "1", "EX", 120);
 
     return {
       attemptId: a.id,
@@ -207,7 +254,7 @@ export async function startOrResumeAttempt(opts: {
       await cancelAutoSubmit(a.id);
       await scheduleAutoSubmit(a.id, a.candidateId, expiryMs);
       // Refresh active key for disconnect detection
-      await redis.set(`attempt:active:${a.id}`, "1", "EX", 45);
+      await redis.set(`attempt:active:${a.id}`, "1", "EX", 120);
     }
 
     await db.insert(eventLogs).values({
@@ -430,6 +477,11 @@ export async function pauseAttempt(
     createdAt: new Date(now),
   });
 
+  await broadcastSessionEvent(attemptId, "session:paused", {
+    reason,
+    remainingTimeSecs: remainingSecs,
+  });
+
   return { remainingTimeSecs: remainingSecs };
 }
 
@@ -468,7 +520,7 @@ export async function resumeAttempt(
   await scheduleAutoSubmit(attemptId, attempt[0].candidateId, expiryMs);
 
   // Set active key for disconnect detection
-  await redis.set(`attempt:active:${attemptId}`, "1", "EX", 45);
+  await redis.set(`attempt:active:${attemptId}`, "1", "EX", 120);
 
   await db.insert(eventLogs).values({
     attemptId,
@@ -476,6 +528,10 @@ export async function resumeAttempt(
     eventDataJson: { remainingTimeSecs: remainingSecs },
     severity: "info",
     createdAt: now,
+  });
+
+  await broadcastSessionEvent(attemptId, "session:resumed", {
+    remainingTimeSecs: remainingSecs,
   });
 
   return { remainingTimeSecs: remainingSecs };
@@ -507,6 +563,9 @@ export async function submitAttempt(
     severity: "info",
     createdAt: now,
   });
+
+  await broadcastSessionEvent(attemptId, "session:submitted", { reason });
+  clearAttemptBatchCache(attemptId);
 }
 
 export async function autoSubmitAttempt(
@@ -536,6 +595,9 @@ export async function autoSubmitAttempt(
     severity: "warn",
     createdAt: now,
   });
+
+  await broadcastSessionEvent(attemptId, "session:auto_submitted", { reason });
+  clearAttemptBatchCache(attemptId);
 }
 
 export async function terminateAttempt(
@@ -565,6 +627,12 @@ export async function terminateAttempt(
     severity: "error",
     createdAt: now,
   });
+
+  await broadcastSessionEvent(attemptId, "session:terminated", {
+    terminatedBy,
+    reason,
+  });
+  clearAttemptBatchCache(attemptId);
 }
 
 export async function logEvent(opts: {
@@ -698,10 +766,13 @@ export async function autoPauseAttempt(
     createdAt: new Date(now),
   });
 
+  await broadcastSessionEvent(attemptId, "session:auto_paused", {
+    reason,
+    remainingTimeSecs: remainingSecs,
+  });
+
   return { remainingTimeSecs: remainingSecs };
 }
-
-const AUTO_RESUME_GRACE_PERIOD_SECS = 300; // 5 minutes
 
 export async function autoResumeAttempt(
   attemptId: string,
@@ -719,22 +790,17 @@ export async function autoResumeAttempt(
   if (attempt.length === 0) return null;
   if (attempt[0].status !== "paused") return null;
 
-  // Check if within grace period
+  // Always auto-resume when the candidate reconnects — regardless of how
+  // long they were disconnected. The timer was frozen during the pause, so
+  // the candidate doesn't gain extra time. The disconnect duration is
+  // logged for audit purposes (admin can review in event logs).
   const disconnectTimeStr = await redis.get(`attempt:disconnect:${attemptId}`);
-  if (!disconnectTimeStr) {
-    // Grace period expired or no disconnect record — don't auto-resume
-    return null;
-  }
-
-  const disconnectTime = Number.parseInt(disconnectTimeStr, 10);
-  const elapsedSinceDisconnect = Math.floor(
-    (Date.now() - disconnectTime) / 1000,
-  );
-  if (elapsedSinceDisconnect > AUTO_RESUME_GRACE_PERIOD_SECS) {
-    // Grace period expired — clean up and don't auto-resume
-    await redis.del(`attempt:disconnect:${attemptId}`);
-    return null;
-  }
+  const disconnectTime = disconnectTimeStr
+    ? Number.parseInt(disconnectTimeStr, 10)
+    : null;
+  const elapsedSinceDisconnect = disconnectTime
+    ? Math.floor((Date.now() - disconnectTime) / 1000)
+    : null;
 
   const now = new Date();
   const remainingSecs = attempt[0].remainingTimeSecs ?? 0;
@@ -753,10 +819,12 @@ export async function autoResumeAttempt(
   await scheduleAutoSubmit(attemptId, attempt[0].candidateId, expiryMs);
 
   // Set active key for disconnect detection
-  await redis.set(`attempt:active:${attemptId}`, "1", "EX", 45);
+  await redis.set(`attempt:active:${attemptId}`, "1", "EX", 120);
 
   // Clean up disconnect key
-  await redis.del(`attempt:disconnect:${attemptId}`);
+  if (disconnectTimeStr) {
+    await redis.del(`attempt:disconnect:${attemptId}`);
+  }
 
   await db.insert(eventLogs).values({
     attemptId,
@@ -767,6 +835,11 @@ export async function autoResumeAttempt(
     },
     severity: "info",
     createdAt: now,
+  });
+
+  await broadcastSessionEvent(attemptId, "session:auto_resumed", {
+    remainingTimeSecs: remainingSecs,
+    disconnectDurationSecs: elapsedSinceDisconnect,
   });
 
   return { remainingTimeSecs: remainingSecs };

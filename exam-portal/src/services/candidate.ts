@@ -30,6 +30,15 @@ export interface CandidateExam {
   totalMarks: number;
   scheduledAt: string | null;
   instructions: string | null;
+  candidateName?: string | null;
+  admitCardNumber?: string | null;
+  adminContact?: {
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+  } | null;
+  attemptStatus?: string | null;
+  attemptSubmittedAt?: string | null;
   sections?: Array<{
     id: string;
     name: string;
@@ -92,11 +101,7 @@ export const candidateService = {
       deviceFingerprint,
     }),
 
-  heartbeat: (deviceFingerprint?: string) => {
-    const headers: Record<string, string> = {};
-    if (deviceFingerprint) headers["x-device-fp"] = deviceFingerprint;
-    return candidateApi.post("/candidate/exams/heartbeat", {}, { headers });
-  },
+  logout: () => candidateApi.post("/auth/logout"),
 
   getExams: async () => {
     const res = await candidateApi.get("/candidate/exams");

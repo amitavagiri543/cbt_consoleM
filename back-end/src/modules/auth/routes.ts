@@ -249,6 +249,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       .set({ isRevoked: true, revokedAt: new Date() })
       .where(eq(sessionTokens.tokenJti, payload.jti));
 
+    // Clear Redis session keys so this user can log in fresh elsewhere
+    // without the old persistent JTI blocking the new session.
+    await redis.del(`session:active_jti:${payload.sub}`);
+    await redis.del(`session:lock:${payload.sub}`);
+    await redis.del(`session:fingerprint:${payload.sub}`);
+
     return { message: "Logged out" };
   });
 
@@ -256,7 +262,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   app.post(
     "/candidate-login",
     {
-      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+      config: { rateLimit: { max: 200, timeWindow: "1 minute" } },
     },
     async (request, reply) => {
       const parsed = candidateLoginSchema.safeParse(request.body);
@@ -276,6 +282,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           dateOfBirth: candidates.dateOfBirth,
           isActive: candidates.isActive,
           fullName: users.fullName,
+          admitCardNumber: candidates.admitCardNumber,
         })
         .from(candidates)
         .innerJoin(users, eq(users.id, candidates.userId))
@@ -327,11 +334,53 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           ),
         );
 
+      // Auto-register device from request metadata
+      let registeredDeviceId: string | null = null;
+      const clientIp = request.ip;
+      const userAgent = request.headers["user-agent"] ?? "unknown";
+      const deviceFp = body.deviceFingerprint ?? body.deviceId ?? null;
+
+      if (deviceFp) {
+        // Upsert device: create if not exists, update lastSeenAt if exists
+        const [existingDevice] = await db
+          .select({ id: deviceRegistrations.id })
+          .from(deviceRegistrations)
+          .where(eq(deviceRegistrations.deviceId, deviceFp))
+          .limit(1);
+
+        if (existingDevice) {
+          registeredDeviceId = existingDevice.id;
+          await db
+            .update(deviceRegistrations)
+            .set({
+              lastSeenAt: new Date(),
+              ipAddress: clientIp,
+              updatedAt: new Date(),
+            })
+            .where(eq(deviceRegistrations.id, existingDevice.id));
+        } else {
+          const [newDevice] = await db
+            .insert(deviceRegistrations)
+            .values({
+              deviceId: deviceFp,
+              deviceName: userAgent.slice(0, 100),
+              macAddress: "00:00:00:00:00:00",
+              hardwareHash: deviceFp,
+              ipAddress: clientIp,
+              status: "active",
+              registeredBy: candidate.userId,
+              lastSeenAt: new Date(),
+            })
+            .returning({ id: deviceRegistrations.id });
+          registeredDeviceId = newDevice.id;
+        }
+      }
+
       // Generate tokens with candidate role
       const tokens = generateTokenPair({
         sub: candidate.userId,
         role: "candidate",
-        deviceId: body.deviceId,
+        deviceId: registeredDeviceId ?? body.deviceId,
       });
 
       const accessJti = verifyToken(tokens.accessToken).jti;
@@ -358,11 +407,23 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         .where(eq(users.id, candidate.userId));
 
       // Acquire Redis session lock — single session enforcement
-      // TTL = 900s (15 min, matches access token expiry). Heartbeat refreshes it.
+      // TTL = 900s (15 min, matches access token expiry). SSE connection
+      // presence refreshes it (the SSE endpoint checks the session lock).
       const lockKey = `session:lock:${candidate.userId}`;
       await redis.set(lockKey, accessJti, "EX", 900);
 
-      // Store device fingerprint in Redis for verification on heartbeat
+      // Persistent key — tracks the currently active JTI for this user.
+      // Used by the auth middleware to reject old sessions even after the
+      // session lock expires. TTL = 7 days (matches refresh token expiry)
+      // so orphaned keys are cleaned up if the candidate never logs out.
+      await redis.set(
+        `session:active_jti:${candidate.userId}`,
+        accessJti,
+        "EX",
+        604_800,
+      );
+
+      // Store device fingerprint in Redis for verification on SSE connect
       if (body.deviceFingerprint) {
         await redis.set(
           `session:fingerprint:${candidate.userId}`,
@@ -385,6 +446,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         user: {
           id: candidate.userId,
           fullName: candidate.fullName,
+          admitCardNumber: candidate.admitCardNumber ?? null,
           role: "candidate",
           activeExamBatchIds: activeBatches.map((a) => a.examBatchId),
         },

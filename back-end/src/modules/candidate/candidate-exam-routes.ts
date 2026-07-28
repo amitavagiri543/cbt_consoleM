@@ -6,14 +6,15 @@ import {
     attempts,
     candidates,
     deviceRegistrations,
-    eventLogs,
     examBatchCandidates,
     examBatches,
     examQuestions,
     examSections,
     exams,
+    institutions,
     questionOptions,
     questions,
+    users,
 } from "../../database/schemas/index.js";
 import { requireRole } from "../../middleware/rbac.js";
 import { verifySebBek } from "../../middleware/seb-verify.js";
@@ -22,7 +23,6 @@ import {
     scheduleAutoSubmit,
 } from "../../services/timer-scheduler.js";
 import { seededShuffle } from "../../utils/shuffle.js";
-import { autoResumeAttempt } from "../sessions/session-service.js";
 
 /**
  * Candidate exam endpoints per API_SPECIFICATION.md Section 5.1.
@@ -68,7 +68,12 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
         eq(examBatches.id, examBatchCandidates.examBatchId),
       )
       .innerJoin(exams, eq(exams.id, examBatches.examId))
-      .where(eq(examBatchCandidates.candidateId, candidate.id));
+      .where(
+        and(
+          eq(examBatchCandidates.candidateId, candidate.id),
+          inArray(examBatches.status, ["active", "published"]),
+        ),
+      );
 
     const result = assignments.map((a) => ({
       examBatchId: a.examBatchId,
@@ -88,14 +93,49 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
     const { batchId } = request.params as { batchId: string };
     const userId = request.user.sub;
 
-    // Look up candidate record from user ID
+    // Look up candidate record from user ID (with name + institution admin contact)
     const [candidate] = await db
-      .select({ id: candidates.id })
+      .select({
+        id: candidates.id,
+        fullName: users.fullName,
+        institutionId: users.institutionId,
+        admitCardNumber: candidates.admitCardNumber,
+      })
       .from(candidates)
+      .innerJoin(users, eq(users.id, candidates.userId))
       .where(eq(candidates.userId, userId))
       .limit(1);
     if (!candidate)
       return reply.code(403).send({ error: "Candidate record not found" });
+
+    // Fetch institution admin contact (if candidate belongs to an institution)
+    let adminContact: {
+      name: string | null;
+      phone: string | null;
+      email: string | null;
+    } = {
+      name: null,
+      phone: null,
+      email: null,
+    };
+    if (candidate.institutionId) {
+      const [inst] = await db
+        .select({
+          name: institutions.name,
+          phone: institutions.contactPhone,
+          email: institutions.contactEmail,
+        })
+        .from(institutions)
+        .where(eq(institutions.id, candidate.institutionId))
+        .limit(1);
+      if (inst) {
+        adminContact = {
+          name: inst.name,
+          phone: inst.phone,
+          email: inst.email,
+        };
+      }
+    }
 
     // Verify candidate is assigned to this batch
     const [assignment] = await db
@@ -141,6 +181,24 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
       .where(eq(examSections.examId, batch.examId))
       .orderBy(examSections.sectionOrder);
 
+    // Check if the candidate already has an attempt for this batch
+    const [existingAttempt] = await db
+      .select({
+        id: attempts.id,
+        status: attempts.status,
+        startedAt: attempts.startedAt,
+        submittedAt: attempts.submittedAt,
+        remainingTimeSecs: attempts.remainingTimeSecs,
+      })
+      .from(attempts)
+      .where(
+        and(
+          eq(attempts.examBatchId, batchId),
+          eq(attempts.candidateId, candidate.id),
+        ),
+      )
+      .limit(1);
+
     return {
       examBatchId: batch.batchId,
       examName: batch.examName,
@@ -149,6 +207,11 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
       status: batch.batchStatus,
       scheduledAt: batch.scheduledStartAt?.toISOString() ?? null,
       instructions: batch.examInstructions,
+      candidateName: candidate.fullName,
+      admitCardNumber: candidate.admitCardNumber ?? "",
+      adminContact,
+      attemptStatus: existingAttempt?.status ?? null,
+      attemptSubmittedAt: existingAttempt?.submittedAt?.toISOString() ?? null,
       sections: sections.map((s) => ({
         id: s.id,
         name: s.name,
@@ -427,18 +490,34 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
 
         // Resume existing attempt
         const durationSecs = (batch.examDuration ?? 180) * 60;
-        const elapsed = existingAttempt.startedAt
-          ? Math.floor(
-              (Date.now() - new Date(existingAttempt.startedAt).getTime()) /
-                1000,
-            )
-          : 0;
-        const remaining = Math.max(0, durationSecs - elapsed);
 
-        // Reschedule auto-submit with updated remaining time
+        // For paused attempts, remainingTimeSecs is already frozen in the DB
+        // (set by autoPauseAttempt/pauseAttempt). For in_progress attempts,
+        // calculate elapsed time since startedAt.
+        let remaining: number;
+        if (existingAttempt.status === "paused") {
+          remaining = existingAttempt.remainingTimeSecs ?? durationSecs;
+        } else {
+          const elapsed = existingAttempt.startedAt
+            ? Math.floor(
+                (Date.now() - new Date(existingAttempt.startedAt).getTime()) /
+                  1000,
+              )
+            : 0;
+          remaining = Math.max(
+            0,
+            (existingAttempt.remainingTimeSecs ?? durationSecs) - elapsed,
+          );
+        }
+
+        // Reschedule auto-submit with correct remaining time
         await cancelAutoSubmit(existingAttempt.id);
         const expiryMs = Date.now() + remaining * 1000;
         await scheduleAutoSubmit(existingAttempt.id, candidate.id, expiryMs);
+
+        // Set active key with longer TTL (120s) to give SSE time to connect
+        // under load. SSE will refresh it every 30s once connected.
+        await redis.set(`attempt:active:${existingAttempt.id}`, "1", "EX", 120);
 
         // Get sections
         const sections = await db
@@ -456,6 +535,7 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
             new Date().toISOString(),
           durationSeconds: durationSecs,
           remainingTimeSeconds: remaining,
+          lastQuestionId: existingAttempt.lastQuestionIdSeen ?? null,
           sections: sections.map((s) => ({
             id: s.id,
             name: s.name,
@@ -476,7 +556,7 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
         .values({
           examBatchId: batchId,
           candidateId: candidate.id,
-          deviceId: deviceUuid ?? null as any,
+          deviceId: deviceUuid ?? (null as any),
           status: "in_progress",
           startedAt: now,
           remainingTimeSecs: durationSecs,
@@ -486,6 +566,10 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
       // Schedule auto-submit in Redis ZSET at exact expiry time
       const expiryMs = now.getTime() + durationSecs * 1000;
       await scheduleAutoSubmit(newAttempt.id, candidate.id, expiryMs);
+
+      // Set active key for disconnect detection (120s TTL to give SSE time
+      // to connect under load, refreshed every 30s by SSE once connected)
+      await redis.set(`attempt:active:${newAttempt.id}`, "1", "EX", 120);
 
       // Get sections
       const sections = await db
@@ -512,101 +596,6 @@ const candidateExamRoutes: FastifyPluginAsync = async (app) => {
       };
     },
   );
-
-  // ─── POST /candidate/heartbeat — Session liveness + lock refresh ────────────
-  app.post("/heartbeat", async (request, reply) => {
-    const userId = request.user.sub;
-    const jti = request.user.jti;
-
-    const lockKey = `session:lock:${userId}`;
-    const currentLock = await redis.get(lockKey);
-    if (currentLock !== jti) {
-      return reply
-        .code(401)
-        .send({ error: "Session taken over by another login" });
-    }
-
-    // Refresh lock TTL
-    await redis.expire(lockKey, 900);
-
-    // Verify device fingerprint if provided
-    const clientFp = request.headers["x-device-fp"] as string | undefined;
-    if (clientFp) {
-      const storedFp = await redis.get(`session:fingerprint:${userId}`);
-      if (storedFp && storedFp !== clientFp) {
-        // Log fingerprint mismatch as a violation
-        const [activeAttempt] = await db
-          .select({ id: attempts.id })
-          .from(attempts)
-          .where(
-            and(
-              eq(attempts.candidateId, userId),
-              inArray(attempts.status, ["in_progress", "paused"]),
-            ),
-          )
-          .limit(1);
-        if (activeAttempt) {
-          await db.insert(eventLogs).values({
-            attemptId: activeAttempt.id,
-            eventType: "device_fingerprint_mismatch",
-            eventDataJson: { expected: storedFp, received: clientFp },
-            severity: "high",
-            createdAt: new Date(),
-          });
-        }
-        return reply.code(401).send({ error: "Device changed during exam" });
-      }
-    }
-
-    // Refresh the attempt active key for auto-pause detection
-    // Also auto-resume if the attempt was auto-paused (within grace period)
-    // Also detect terminated attempts (admin stopped exam) to trigger SEB close
-    const [activeAttempt] = await db
-      .select({
-        id: attempts.id,
-        status: attempts.status,
-      })
-      .from(attempts)
-      .where(
-        and(
-          eq(attempts.candidateId, userId),
-          inArray(attempts.status, [
-            "in_progress",
-            "paused",
-            "terminated",
-            "force_submitted",
-          ]),
-        ),
-      )
-      .limit(1);
-
-    if (activeAttempt) {
-      if (
-        activeAttempt.status === "terminated" ||
-        activeAttempt.status === "force_submitted"
-      ) {
-        return { ok: true, terminated: true };
-      }
-      if (activeAttempt.status === "paused") {
-        // Try to auto-resume (will only succeed within 5-min grace period)
-        const resumed = await autoResumeAttempt(activeAttempt.id);
-        if (resumed) {
-          return {
-            ok: true,
-            autoResumed: true,
-            remainingTimeSecs: resumed.remainingTimeSecs,
-          };
-        }
-        // Grace period expired — stay paused, admin must manually resume
-        return { ok: true, autoResumed: false, paused: true };
-      }
-
-      // in_progress — refresh active key (45s TTL, heartbeat every 30s)
-      await redis.set(`attempt:active:${activeAttempt.id}`, "1", "EX", 45);
-    }
-
-    return { ok: true };
-  });
 
   // ─── GET /candidate/exams/:batchId/manifest — Signed exam manifest ────────────
   // Per SECURITY_ARCHITECTURE.md Section 17.3

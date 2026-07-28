@@ -25,7 +25,7 @@ export function getSebLaunchUrl(
   if (startUrl) {
     return `${url}?starturl=${encodeURIComponent(startUrl)}`;
   }
-  return `${url}?starturl=${encodeURIComponent(`${origin}/examportal/login`)}`;
+  return `${url}?starturl=${encodeURIComponent(`${origin}/examportal/`)}`;
 }
 
 /**

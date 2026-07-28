@@ -251,7 +251,7 @@ export default function InstitutionDetailPage() {
         />
       )}
       {activeFolder === "exams" && (
-        <ExamsListPage institutionId={id} hideHeader onBack={handleBack} />
+        <ExamsListPage institutionId={id} hideHeader />
       )}
       {activeFolder === "candidates" && (
         <CandidatesPage institutionId={id} hideHeader onBack={handleBack} />

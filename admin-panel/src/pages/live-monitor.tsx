@@ -40,6 +40,21 @@ function formatTime(secs: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/**
+ * Computes the live remaining time for an attempt.
+ * - For `in_progress`: subtracts seconds elapsed since last server refresh
+ * - For `paused` / `not_started` / terminal: returns the server value as-is (frozen)
+ */
+function liveRemainingSecs(
+  attempt: ActiveAttempt,
+  lastRefresh: number,
+  now: number,
+): number {
+  if (attempt.status !== "in_progress") return attempt.remainingTimeSecs;
+  const elapsed = Math.floor((now - lastRefresh) / 1000);
+  return Math.max(0, attempt.remainingTimeSecs - elapsed);
+}
+
 function statusColor(status: string): string {
   switch (status) {
     case "in_progress":
@@ -65,8 +80,17 @@ export default function LiveMonitorPage() {
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<number>(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [now, setNow] = useState<number>(Date.now());
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevAttemptsRef = useRef<Map<string, string>>(new Map());
+
+  // Tick every second for real-time countdown display
+  useEffect(() => {
+    tickRef.current = setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+    };
+  }, []);
 
   // Load exam batches on mount
   useEffect(() => {
@@ -87,66 +111,107 @@ export default function LiveMonitorPage() {
     loadBatches();
   }, []);
 
-  const fetchActiveSessions = useCallback(async () => {
-    if (!selectedBatchId) return;
-    setLoading(true);
-    try {
-      const res = await sessionService.getActiveSessions(selectedBatchId);
-      const newAttempts = res.attempts;
+  const fetchActiveSessions = useCallback(
+    async (silent = false) => {
+      if (!selectedBatchId) return;
+      if (!silent) setLoading(true);
+      try {
+        const res = await sessionService.getActiveSessions(selectedBatchId);
+        const newAttempts = res.attempts;
 
-      // Detect status changes and fire toast notifications
-      for (const attempt of newAttempts) {
-        const prevStatus = prevAttemptsRef.current.get(attempt.id);
-        if (prevStatus && prevStatus !== attempt.status) {
-          if (attempt.status === "auto_submitted") {
-            toast.warning(
-              `Attempt ${attempt.id.slice(0, 8)}... was auto-submitted (timer expired)`,
-              { icon: <Zap className="h-4 w-4" />, duration: 8000 },
-            );
-          } else if (
-            attempt.status === "submitted" ||
-            attempt.status === "force_submitted"
-          ) {
-            toast.success(`Attempt ${attempt.id.slice(0, 8)}... was submitted`);
-          } else if (attempt.status === "terminated") {
-            toast.error(`Attempt ${attempt.id.slice(0, 8)}... was terminated`);
-          } else if (attempt.status === "paused") {
-            toast.info(`Attempt ${attempt.id.slice(0, 8)}... was paused`);
-          } else if (
-            attempt.status === "in_progress" &&
-            prevStatus === "paused"
-          ) {
-            toast.info(`Attempt ${attempt.id.slice(0, 8)}... was resumed`);
+        // Detect status changes and fire toast notifications
+        for (const attempt of newAttempts) {
+          const prevStatus = prevAttemptsRef.current.get(attempt.id);
+          if (prevStatus && prevStatus !== attempt.status) {
+            if (attempt.status === "auto_submitted") {
+              toast.warning(
+                `Attempt ${attempt.id.slice(0, 8)}... was auto-submitted (timer expired)`,
+                { icon: <Zap className="h-4 w-4" />, duration: 8000 },
+              );
+            } else if (
+              attempt.status === "submitted" ||
+              attempt.status === "force_submitted"
+            ) {
+              toast.success(
+                `Attempt ${attempt.id.slice(0, 8)}... was submitted`,
+              );
+            } else if (attempt.status === "terminated") {
+              toast.error(
+                `Attempt ${attempt.id.slice(0, 8)}... was terminated`,
+              );
+            } else if (attempt.status === "paused") {
+              toast.info(
+                `${attempt.candidateName ?? attempt.id.slice(0, 8)}... was paused`,
+              );
+            } else if (
+              attempt.status === "in_progress" &&
+              prevStatus === "paused"
+            ) {
+              toast.info(
+                `${attempt.candidateName ?? attempt.id.slice(0, 8)}... was resumed`,
+              );
+            }
           }
+          prevAttemptsRef.current.set(attempt.id, attempt.status);
         }
-        prevAttemptsRef.current.set(attempt.id, attempt.status);
+
+        setAttempts(newAttempts);
+        setLastRefresh(Date.now());
+      } catch {
+        // Silent on auto-refresh, toast on manual
+        if (!silent) toast.error("Failed to fetch active sessions");
+      } finally {
+        if (!silent) setLoading(false);
       }
+    },
+    [selectedBatchId],
+  );
 
-      setAttempts(newAttempts);
-      setLastRefresh(Date.now());
-    } catch {
-      toast.error("Failed to fetch active sessions");
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedBatchId]);
-
-  // Auto-refresh every 5 seconds
+  // SSE connection — replaces 3-second polling.
+  // Server pushes events in real-time: pause, resume, submit, terminate, etc.
+  // On any event, we do an immediate fetch to get the updated data.
   useEffect(() => {
-    if (autoRefresh && selectedBatchId) {
-      fetchActiveSessions();
-      intervalRef.current = setInterval(fetchActiveSessions, 5000);
-      return () => {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-      };
-    }
+    if (!autoRefresh || !selectedBatchId) return;
+
+    const token = localStorage.getItem("accessToken");
+    if (!token) return;
+
+    // Initial fetch
+    fetchActiveSessions(true);
+
+    // Open SSE connection
+    const eventSource = new EventSource(
+      `/api/sse/admin?token=${encodeURIComponent(token)}&examBatchId=${encodeURIComponent(selectedBatchId)}`,
+    );
+
+    // On any session event, immediately fetch updated data
+    const handleSessionEvent = () => {
+      fetchActiveSessions(true);
+    };
+
+    eventSource.addEventListener("session:paused", handleSessionEvent);
+    eventSource.addEventListener("session:resumed", handleSessionEvent);
+    eventSource.addEventListener("session:auto_paused", handleSessionEvent);
+    eventSource.addEventListener("session:auto_resumed", handleSessionEvent);
+    eventSource.addEventListener("session:submitted", handleSessionEvent);
+    eventSource.addEventListener("session:auto_submitted", handleSessionEvent);
+    eventSource.addEventListener("session:terminated", handleSessionEvent);
+
+    eventSource.onerror = () => {
+      // SSE connection lost — EventSource auto-reconnects.
+      // Fallback: poll every 5s while disconnected.
+    };
+
+    return () => {
+      eventSource.close();
+    };
   }, [autoRefresh, selectedBatchId, fetchActiveSessions]);
 
   const handlePause = async (attemptId: string) => {
     try {
       await sessionService.pauseAttempt(attemptId, "Admin pause from monitor");
       toast.success("Attempt paused");
-      fetchActiveSessions();
+      fetchActiveSessions(true);
     } catch {
       toast.error("Failed to pause attempt");
     }
@@ -156,7 +221,7 @@ export default function LiveMonitorPage() {
     try {
       await sessionService.resumeAttempt(attemptId);
       toast.success("Attempt resumed");
-      fetchActiveSessions();
+      fetchActiveSessions(true);
     } catch {
       toast.error("Failed to resume attempt");
     }
@@ -170,7 +235,7 @@ export default function LiveMonitorPage() {
         "Admin termination from monitor",
       );
       toast.success("Attempt terminated");
-      fetchActiveSessions();
+      fetchActiveSessions(true);
     } catch {
       toast.error("Failed to terminate attempt");
     }
@@ -204,17 +269,22 @@ export default function LiveMonitorPage() {
           <RefreshCw
             className={`mr-2 h-4 w-4 ${autoRefresh ? "animate-spin" : ""}`}
           />
-          {autoRefresh ? "Auto (5s)" : "Manual"}
+          {autoRefresh ? "Live (SSE)" : "Manual"}
         </Button>
         <Button
           variant="outline"
           size="sm"
-          onClick={fetchActiveSessions}
+          onClick={() => fetchActiveSessions(false)}
           disabled={loading}
         >
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
+        {lastRefresh > 0 && (
+          <span className="text-xs text-muted-foreground">
+            Updated {Math.max(0, Math.floor((now - lastRefresh) / 1000))}s ago
+          </span>
+        )}
       </div>
 
       {/* Batch selector */}
@@ -348,10 +418,37 @@ export default function LiveMonitorPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <span className="flex items-center gap-1 font-mono text-sm">
-                        <Timer className="h-3 w-3 text-muted-foreground" />
-                        {formatTime(attempt.remainingTimeSecs)}
-                      </span>
+                      {(() => {
+                        const liveSecs = liveRemainingSecs(
+                          attempt,
+                          lastRefresh,
+                          now,
+                        );
+                        const isLow = liveSecs <= 300 && liveSecs > 0;
+                        const isPaused = attempt.status === "paused";
+                        const isDone = liveSecs <= 0;
+                        return (
+                          <span
+                            className={`flex items-center gap-1 font-mono text-sm ${
+                              isDone
+                                ? "text-red-600 font-bold"
+                                : isPaused
+                                  ? "text-yellow-600"
+                                  : isLow
+                                    ? "text-orange-600 font-bold"
+                                    : "text-foreground"
+                            }`}
+                          >
+                            <Timer className="h-3 w-3 text-muted-foreground" />
+                            {formatTime(liveSecs)}
+                            {isPaused && (
+                              <span className="ml-1 text-xs text-yellow-600">
+                                (frozen)
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {attempt.ipAddress ?? "—"}
