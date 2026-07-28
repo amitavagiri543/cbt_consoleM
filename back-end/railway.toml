@@ -1,6 +1,5 @@
 [deploy]
 rootDir = "back-end"
-startCommand = "sh docker-entrypoint.sh"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 
