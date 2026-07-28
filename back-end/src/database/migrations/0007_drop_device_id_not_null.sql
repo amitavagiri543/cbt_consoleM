@@ -1,0 +1,1 @@
+ALTER TABLE "attempts" ALTER COLUMN "device_id" DROP NOT NULL;

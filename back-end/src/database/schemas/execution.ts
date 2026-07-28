@@ -32,9 +32,7 @@ export const attempts = pgTable(
     candidateId: uuid("candidate_id")
       .notNull()
       .references(() => candidates.id),
-    deviceId: uuid("device_id")
-      .notNull()
-      .references(() => deviceRegistrations.id),
+    deviceId: uuid("device_id").references(() => deviceRegistrations.id),
     status: attemptStatusEnum("status").notNull().default("not_started"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
