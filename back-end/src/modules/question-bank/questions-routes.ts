@@ -5,6 +5,8 @@ import { db } from "../../database/db.js";
 import {
     answers,
     examQuestions,
+    exams,
+    examSections,
     questionOptions,
     questions,
     questionTags,
@@ -153,6 +155,155 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
       }));
 
       return { data, total: count, page, pageSize };
+    },
+  );
+
+  // Section-wise view: returns questions grouped by exam sections
+  app.get(
+    "/section-wise",
+    { preHandler: requireRole("super_admin", "exam_admin", "question_author") },
+    async (request) => {
+      const { subjectId, batchId } = request.query as {
+        subjectId?: string;
+        batchId?: string;
+      };
+      if (!subjectId || !batchId)
+        return {
+          error: "subjectId and batchId are required",
+        };
+
+      // Get all exams in this batch
+      const batchExams = await db
+        .select({ id: exams.id, name: exams.name })
+        .from(exams)
+        .where(eq(exams.batchId, batchId));
+
+      if (batchExams.length === 0) return { sections: [], unassigned: [] };
+
+      const examIds = batchExams.map((e) => e.id);
+      const examMap = new Map(batchExams.map((e) => [e.id, e.name]));
+
+      // Get all sections for these exams
+      const allSections = await db
+        .select()
+        .from(examSections)
+        .where(inArray(examSections.examId, examIds))
+        .orderBy(asc(examSections.sectionOrder));
+
+      if (allSections.length === 0) return { sections: [], unassigned: [] };
+
+      const sectionIds = allSections.map((s) => s.id);
+
+      // Get all exam_questions for these sections, joined with questions filtered by subject
+      const eqRows = await db
+        .select({
+          eqId: examQuestions.id,
+          examSectionId: examQuestions.examSectionId,
+          questionId: examQuestions.questionId,
+          displayOrder: examQuestions.displayOrder,
+        })
+        .from(examQuestions)
+        .where(inArray(examQuestions.examSectionId, sectionIds))
+        .orderBy(asc(examQuestions.displayOrder));
+
+      // Get question details for all linked questions that belong to this subject
+      const linkedQuestionIds = [...new Set(eqRows.map((r) => r.questionId))];
+
+      let linkedQuestions: (typeof questions.$inferSelect)[] = [];
+      if (linkedQuestionIds.length > 0) {
+        linkedQuestions = await db
+          .select()
+          .from(questions)
+          .where(
+            and(
+              inArray(questions.id, linkedQuestionIds),
+              eq(questions.subjectId, subjectId),
+            ),
+          )
+          .orderBy(desc(questions.createdAt));
+      }
+
+      const linkedQIds = new Set(linkedQuestions.map((q) => q.id));
+
+      // Fetch options and tags for linked questions
+      const [allOptions, allTags] =
+        linkedQIds.size > 0
+          ? await Promise.all([
+              db
+                .select()
+                .from(questionOptions)
+                .where(
+                  sql`${questionOptions.questionId} = ANY(${sql.raw(`ARRAY['${[...linkedQIds].join("','")}']::uuid[]`)})`,
+                )
+                .orderBy(asc(questionOptions.displayOrder)),
+              db
+                .select()
+                .from(questionTags)
+                .where(
+                  sql`${questionTags.questionId} = ANY(${sql.raw(`ARRAY['${[...linkedQIds].join("','")}']::uuid[]`)})`,
+                ),
+            ])
+          : [[], []];
+
+      const optionsMap = new Map<string, typeof allOptions>();
+      for (const opt of allOptions) {
+        const arr = optionsMap.get(opt.questionId) ?? [];
+        arr.push(opt);
+        optionsMap.set(opt.questionId, arr);
+      }
+      const tagsMap = new Map<string, string[]>();
+      for (const t of allTags) {
+        const arr = tagsMap.get(t.questionId) ?? [];
+        arr.push(t.tag);
+        tagsMap.set(t.questionId, arr);
+      }
+
+      const qMap = new Map(linkedQuestions.map((q) => [q.id, q]));
+
+      // Build section groups
+      const sectionsWithQuestions = allSections
+        .map((section) => {
+          const sectionEqRows = eqRows.filter(
+            (r) =>
+              r.examSectionId === section.id && linkedQIds.has(r.questionId),
+          );
+          const sectionQuestions = sectionEqRows.map((r) => {
+            const q = qMap.get(r.questionId)!;
+            return {
+              ...q,
+              options: optionsMap.get(q.id) ?? [],
+              tags: tagsMap.get(q.id) ?? [],
+              examQuestionId: r.eqId,
+              displayOrder: r.displayOrder,
+            };
+          });
+          return {
+            ...section,
+            examName: examMap.get(section.examId) ?? "",
+            questions: sectionQuestions,
+          };
+        })
+        .filter((s) => s.questions.length > 0);
+
+      // Find unassigned questions (subject questions not in any exam section for this batch)
+      const assignedQIds = new Set(
+        eqRows
+          .filter((r) => linkedQIds.has(r.questionId))
+          .map((r) => r.questionId),
+      );
+
+      const unassignedQuestions = linkedQuestions
+        .filter((q) => !assignedQIds.has(q.id))
+        .map((q) => ({
+          ...q,
+          options: optionsMap.get(q.id) ?? [],
+          tags: tagsMap.get(q.id) ?? [],
+        }));
+
+      return {
+        sections: sectionsWithQuestions,
+        unassigned: unassignedQuestions,
+      };
     },
   );
 

@@ -41,6 +41,7 @@ import {
     TableHeader,
     TableRow,
 } from "../components/ui/table";
+import { cn } from "../lib/utils";
 import { examsService } from "../services/exams";
 import { questionsService } from "../services/questions";
 import { subjectsService } from "../services/subjects";
@@ -72,6 +73,230 @@ const QUESTION_TYPES: { value: QuestionType; label: string }[] = [
 const typeLabels: Record<QuestionType, string> = Object.fromEntries(
   QUESTION_TYPES.map((t) => [t.value, t.label]),
 ) as Record<QuestionType, string>;
+
+function SectionWiseView({
+  data,
+  loading,
+  typeLabels,
+  onEdit,
+  onDelete,
+}: {
+  data?: {
+    sections: {
+      id: string;
+      examId: string;
+      examName: string;
+      name: string;
+      sectionOrder: number;
+      questions: (Question & {
+        examQuestionId: string;
+        displayOrder: number;
+      })[];
+    }[];
+    unassigned: Question[];
+  };
+  loading: boolean;
+  typeLabels: Record<QuestionType, string>;
+  onEdit: (q: Question) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!data || (data.sections.length === 0 && data.unassigned.length === 0)) {
+    return (
+      <div className="rounded-md border border-border p-8 text-center text-muted-foreground">
+        No questions found in any exam sections for this batch.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {data.sections.map((section) => (
+        <div
+          key={section.id}
+          className="rounded-md border border-border overflow-hidden"
+        >
+          <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm">{section.examName}</span>
+              <span className="text-muted-foreground">/</span>
+              <span className="font-medium text-sm">{section.name}</span>
+            </div>
+            <Badge variant="secondary" className="text-xs">
+              {section.questions.length} question(s)
+            </Badge>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">#</TableHead>
+                <TableHead>Question</TableHead>
+                <TableHead className="w-32">Type</TableHead>
+                <TableHead className="w-32">Tags</TableHead>
+                <TableHead className="w-24">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {section.questions.map((q, i) => {
+                const contentText = (q.contentJson?.text as string) ?? "";
+                return (
+                  <TableRow key={q.id}>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {i + 1}
+                    </TableCell>
+                    <TableCell className="max-w-md">
+                      <p className="text-sm line-clamp-2">{contentText}</p>
+                      {q.options && q.options.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {q.options.length} option(s)
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">
+                        {typeLabels[q.type] ?? q.type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {(q.tags ?? []).slice(0, 2).map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className="text-xs"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                        {(q.tags ?? []).length > 2 && (
+                          <span className="text-xs text-muted-foreground">
+                            +{(q.tags ?? []).length - 2}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEdit(q)}
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onDelete(q.id)}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4 text-red-600" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      ))}
+
+      {data.unassigned.length > 0 && (
+        <div className="rounded-md border border-border overflow-hidden">
+          <div className="bg-muted/50 px-4 py-2.5 flex items-center justify-between">
+            <span className="font-medium text-sm">Unassigned Questions</span>
+            <Badge variant="secondary" className="text-xs">
+              {data.unassigned.length} question(s)
+            </Badge>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">#</TableHead>
+                <TableHead>Question</TableHead>
+                <TableHead className="w-32">Type</TableHead>
+                <TableHead className="w-32">Tags</TableHead>
+                <TableHead className="w-24">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.unassigned.map((q, i) => {
+                const contentText = (q.contentJson?.text as string) ?? "";
+                return (
+                  <TableRow key={q.id}>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {i + 1}
+                    </TableCell>
+                    <TableCell className="max-w-md">
+                      <p className="text-sm line-clamp-2">{contentText}</p>
+                      {q.options && q.options.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {q.options.length} option(s)
+                        </p>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">
+                        {typeLabels[q.type] ?? q.type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {(q.tags ?? []).slice(0, 2).map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className="text-xs"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                        {(q.tags ?? []).length > 2 && (
+                          <span className="text-xs text-muted-foreground">
+                            +{(q.tags ?? []).length - 2}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEdit(q)}
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onDelete(q.id)}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4 text-red-600" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function QuestionsPage({
   subjectId: propSubjectId,
@@ -124,6 +349,7 @@ export default function QuestionsPage({
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importSubjectId, setImportSubjectId] = useState(propSubjectId || "");
+  const [viewMode, setViewMode] = useState<"flat" | "section">("flat");
   const [createForm, setCreateForm] = useState({
     subjectId: propSubjectId || "",
     type: "mcq_single" as QuestionType,
@@ -161,6 +387,25 @@ export default function QuestionsPage({
         type: filters.type || undefined,
       }),
     placeholderData: (prev) => prev,
+    enabled: viewMode === "flat",
+  });
+
+  const { data: sectionData, isLoading: sectionLoading } = useQuery({
+    queryKey: [
+      "questions",
+      "section-wise",
+      propSubjectId || filters.subjectId,
+      batchId,
+    ],
+    queryFn: () =>
+      questionsService.sectionWise(
+        propSubjectId || filters.subjectId,
+        batchId!,
+      ),
+    enabled:
+      viewMode === "section" &&
+      !!batchId &&
+      !!(propSubjectId || filters.subjectId),
   });
 
   const createMutation = useMutation({
@@ -570,6 +815,32 @@ export default function QuestionsPage({
               className="pl-9 h-9 text-xs"
             />
           </div>
+          {batchId && (propSubjectId || filters.subjectId) && (
+            <div className="flex rounded-md border border-input overflow-hidden">
+              <button
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium transition-colors",
+                  viewMode === "flat"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-transparent hover:bg-accent",
+                )}
+                onClick={() => setViewMode("flat")}
+              >
+                Flat View
+              </button>
+              <button
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium transition-colors border-l border-input",
+                  viewMode === "section"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-transparent hover:bg-accent",
+                )}
+                onClick={() => setViewMode("section")}
+              >
+                Section View
+              </button>
+            </div>
+          )}
           {!propSubjectId && (
             <select
               value={filters.subjectId}
@@ -694,88 +965,100 @@ export default function QuestionsPage({
         </div>
       </div>
 
-      <div className="rounded-md border border-border">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {flexRender(
-                      header.column.columnDef.header,
-                      header.getContext(),
-                    )}
-                  </TableHead>
+      {viewMode === "section" && batchId ? (
+        <SectionWiseView
+          data={sectionData}
+          loading={sectionLoading}
+          typeLabels={typeLabels}
+          onEdit={openEditDialog}
+          onDelete={(id) => deleteMutation.mutate(id)}
+        />
+      ) : (
+        <>
+          <div className="rounded-md border border-border">
+            <Table>
+              <TableHeader>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead key={header.id}>
+                        {flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
                 ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
-                </TableCell>
-              </TableRow>
-            ) : tableData.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No questions found
-                </TableCell>
-              </TableRow>
-            ) : (
-              table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext(),
-                      )}
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={columns.length}
+                      className="h-24 text-center"
+                    >
+                      <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
                     </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+                  </TableRow>
+                ) : tableData.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={columns.length}
+                      className="h-24 text-center text-muted-foreground"
+                    >
+                      No questions found
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  table.getRowModel().rows.map((row) => (
+                    <TableRow key={row.id}>
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          )}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {data ? `${data.total} total questions` : "Loading..."}
-        </p>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Previous
-          </Button>
-          <span className="text-sm">
-            Page {pagination.pageIndex + 1}
-            {data ? ` of ${Math.ceil(data.total / data.pageSize)}` : ""}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-          >
-            Next
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              {data ? `${data.total} total questions` : "Loading..."}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => table.previousPage()}
+                disabled={!table.getCanPreviousPage()}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              <span className="text-sm">
+                Page {pagination.pageIndex + 1}
+                {data ? ` of ${Math.ceil(data.total / data.pageSize)}` : ""}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => table.nextPage()}
+                disabled={!table.getCanNextPage()}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
