@@ -1,56 +1,56 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  flexRender,
-  getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
-  type ColumnDef,
-  type SortingState,
+    flexRender,
+    getCoreRowModel,
+    getPaginationRowModel,
+    getSortedRowModel,
+    useReactTable,
+    type ColumnDef,
+    type SortingState,
 } from "@tanstack/react-table";
 import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardList,
-  Download,
-  Loader2,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
+    ArrowLeft,
+    ChevronLeft,
+    ChevronRight,
+    ClipboardList,
+    Download,
+    Loader2,
+    Pencil,
+    Plus,
+    Search,
+    Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
 } from "../components/ui/table";
 import { examsService } from "../services/exams";
 import { questionsService } from "../services/questions";
 import { subjectsService } from "../services/subjects";
 import type {
-  CreateExamInput,
-  CreateQuestionInput,
-  NavigationMode,
-  Question,
-  QuestionType,
-  SelectionStrategy,
+    CreateExamInput,
+    CreateQuestionInput,
+    NavigationMode,
+    Question,
+    QuestionType,
+    SelectionStrategy,
 } from "../types";
 
 const QUESTION_TYPES: { value: QuestionType; label: string }[] = [
@@ -144,6 +144,8 @@ export default function QuestionsPage({
     staleTime: 5 * 60 * 1000,
   });
 
+  const [showInactive, setShowInactive] = useState(false);
+
   const { data, isLoading } = useQuery({
     queryKey: [
       "questions",
@@ -151,6 +153,7 @@ export default function QuestionsPage({
       pagination.pageSize,
       debouncedSearch,
       filters,
+      showInactive,
     ],
     queryFn: () =>
       questionsService.list({
@@ -159,6 +162,7 @@ export default function QuestionsPage({
         search: debouncedSearch || undefined,
         subjectId: filters.subjectId || undefined,
         type: filters.type || undefined,
+        isActive: showInactive ? undefined : true,
       }),
     placeholderData: (prev) => prev,
   });
@@ -480,7 +484,19 @@ export default function QuestionsPage({
       header: "Type",
       cell: ({ row }) => {
         const type = row.getValue("type") as QuestionType;
-        return <Badge variant="outline">{typeLabels[type]}</Badge>;
+        return (
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">{typeLabels[type]}</Badge>
+            {!row.original.isActive && (
+              <Badge
+                variant="secondary"
+                className="text-xs text-muted-foreground"
+              >
+                Inactive
+              </Badge>
+            )}
+          </div>
+        );
       },
     },
     {
@@ -529,17 +545,25 @@ export default function QuestionsPage({
     const selectedRows = table.getSelectedRowModel().rows;
     if (selectedRows.length === 0) return;
     setBulkDeleting(true);
+    // Clear selection and close dialog immediately to prevent stale state
+    setRowSelection({});
+    setBulkDeleteConfirmOpen(false);
     try {
-      await Promise.all(
-        selectedRows.map((row) => questionsService.deactivate(row.original.id))
+      const results = await Promise.allSettled(
+        selectedRows.map((row) => questionsService.deactivate(row.original.id)),
       );
-      toast.success(`Successfully deactivated ${selectedRows.length} question(s)`);
-      queryClient.invalidateQueries({ queryKey: ["questions"] });
-      setRowSelection({});
-      setBulkDeleteConfirmOpen(false);
+      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (succeeded > 0) {
+        toast.success(`Successfully deactivated ${succeeded} question(s)`);
+        queryClient.invalidateQueries({ queryKey: ["questions"] });
+      }
+      if (failed > 0) {
+        toast.error(`Failed to deactivate ${failed} question(s)`);
+      }
     } catch (err) {
       console.error(err);
-      toast.error("Failed to deactivate some questions");
+      toast.error("Failed to deactivate questions");
     } finally {
       setBulkDeleting(false);
     }
@@ -571,6 +595,17 @@ export default function QuestionsPage({
               className="pl-9 h-9 text-xs"
             />
           </div>
+          <Button
+            variant={showInactive ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setShowInactive((v) => !v);
+              setPagination((p) => ({ ...p, pageIndex: 0 }));
+            }}
+            className="h-9 text-xs whitespace-nowrap"
+          >
+            {showInactive ? "Showing All" : "Active Only"}
+          </Button>
           {!propSubjectId && (
             <select
               value={filters.subjectId}
@@ -1342,10 +1377,15 @@ export default function QuestionsPage({
       </Dialog>
 
       {/* Bulk Deactivate Confirm Dialog */}
-      <Dialog open={bulkDeleteConfirmOpen} onOpenChange={setBulkDeleteConfirmOpen}>
+      <Dialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={setBulkDeleteConfirmOpen}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-red-500">Confirm Bulk Deactivation</DialogTitle>
+            <DialogTitle className="text-red-500">
+              Confirm Bulk Deactivation
+            </DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-muted-foreground">
@@ -1353,7 +1393,8 @@ export default function QuestionsPage({
               <span className="font-bold text-foreground">
                 {table.getSelectedRowModel().rows.length}
               </span>{" "}
-              selected question(s)? Deactivated questions will be hidden from exams.
+              selected question(s)? Deactivated questions will be hidden from
+              exams.
             </p>
           </div>
           <DialogFooter>
