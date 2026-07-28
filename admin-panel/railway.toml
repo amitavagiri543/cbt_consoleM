@@ -1,4 +1,5 @@
 [deploy]
+rootDir = "admin-panel"
 healthcheckPath = "/"
 healthcheckTimeout = 30
 
