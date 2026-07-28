@@ -1,1 +1,1 @@
-ALTER TABLE "device_registrations" ADD COLUMN "client_version" varchar(50);
+ALTER TABLE "device_registrations" ADD COLUMN IF NOT EXISTS "client_version" varchar(50);
