@@ -172,75 +172,76 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
           error: "subjectId and batchId are required",
         };
 
+      // Get ALL questions for this subject (these are the pool of questions)
+      const allSubjectQuestions = await db
+        .select()
+        .from(questions)
+        .where(eq(questions.subjectId, subjectId))
+        .orderBy(desc(questions.createdAt));
+
+      const allQIds = new Set(allSubjectQuestions.map((q) => q.id));
+
       // Get all exams in this batch
       const batchExams = await db
         .select({ id: exams.id, name: exams.name })
         .from(exams)
         .where(eq(exams.batchId, batchId));
 
-      if (batchExams.length === 0) return { sections: [], unassigned: [] };
-
       const examIds = batchExams.map((e) => e.id);
       const examMap = new Map(batchExams.map((e) => [e.id, e.name]));
 
-      // Get all sections for these exams
-      const allSections = await db
-        .select()
-        .from(examSections)
-        .where(inArray(examSections.examId, examIds))
-        .orderBy(asc(examSections.sectionOrder));
-
-      if (allSections.length === 0) return { sections: [], unassigned: [] };
+      // Get all sections for these exams (may be empty if no exams/sections)
+      let allSections: (typeof examSections.$inferSelect)[] = [];
+      if (examIds.length > 0) {
+        allSections = await db
+          .select()
+          .from(examSections)
+          .where(inArray(examSections.examId, examIds))
+          .orderBy(asc(examSections.sectionOrder));
+      }
 
       const sectionIds = allSections.map((s) => s.id);
 
-      // Get all exam_questions for these sections, joined with questions filtered by subject
-      const eqRows = await db
-        .select({
-          eqId: examQuestions.id,
-          examSectionId: examQuestions.examSectionId,
-          questionId: examQuestions.questionId,
-          displayOrder: examQuestions.displayOrder,
-        })
-        .from(examQuestions)
-        .where(inArray(examQuestions.examSectionId, sectionIds))
-        .orderBy(asc(examQuestions.displayOrder));
-
-      // Get question details for all linked questions that belong to this subject
-      const linkedQuestionIds = [...new Set(eqRows.map((r) => r.questionId))];
-
-      let linkedQuestions: (typeof questions.$inferSelect)[] = [];
-      if (linkedQuestionIds.length > 0) {
-        linkedQuestions = await db
-          .select()
-          .from(questions)
-          .where(
-            and(
-              inArray(questions.id, linkedQuestionIds),
-              eq(questions.subjectId, subjectId),
-            ),
-          )
-          .orderBy(desc(questions.createdAt));
+      // Get all exam_questions for these sections
+      let eqRows: {
+        eqId: string;
+        examSectionId: string;
+        questionId: string;
+        displayOrder: number;
+      }[] = [];
+      if (sectionIds.length > 0) {
+        eqRows = await db
+          .select({
+            eqId: examQuestions.id,
+            examSectionId: examQuestions.examSectionId,
+            questionId: examQuestions.questionId,
+            displayOrder: examQuestions.displayOrder,
+          })
+          .from(examQuestions)
+          .where(inArray(examQuestions.examSectionId, sectionIds))
+          .orderBy(asc(examQuestions.displayOrder));
       }
 
-      const linkedQIds = new Set(linkedQuestions.map((q) => q.id));
+      // Only keep exam_questions that reference questions in our subject
+      const eqInSubject = eqRows.filter((r) => allQIds.has(r.questionId));
+      const assignedQIds = new Set(eqInSubject.map((r) => r.questionId));
 
-      // Fetch options and tags for linked questions
+      // Fetch options and tags for ALL subject questions
       const [allOptions, allTags] =
-        linkedQIds.size > 0
+        allQIds.size > 0
           ? await Promise.all([
               db
                 .select()
                 .from(questionOptions)
                 .where(
-                  sql`${questionOptions.questionId} = ANY(${sql.raw(`ARRAY['${[...linkedQIds].join("','")}']::uuid[]`)})`,
+                  sql`${questionOptions.questionId} = ANY(${sql.raw(`ARRAY['${[...allQIds].join("','")}']::uuid[]`)})`,
                 )
                 .orderBy(asc(questionOptions.displayOrder)),
               db
                 .select()
                 .from(questionTags)
                 .where(
-                  sql`${questionTags.questionId} = ANY(${sql.raw(`ARRAY['${[...linkedQIds].join("','")}']::uuid[]`)})`,
+                  sql`${questionTags.questionId} = ANY(${sql.raw(`ARRAY['${[...allQIds].join("','")}']::uuid[]`)})`,
                 ),
             ])
           : [[], []];
@@ -258,14 +259,13 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
         tagsMap.set(t.questionId, arr);
       }
 
-      const qMap = new Map(linkedQuestions.map((q) => [q.id, q]));
+      const qMap = new Map(allSubjectQuestions.map((q) => [q.id, q]));
 
-      // Build section groups
+      // Build section groups (only sections that have questions from this subject)
       const sectionsWithQuestions = allSections
         .map((section) => {
-          const sectionEqRows = eqRows.filter(
-            (r) =>
-              r.examSectionId === section.id && linkedQIds.has(r.questionId),
+          const sectionEqRows = eqInSubject.filter(
+            (r) => r.examSectionId === section.id,
           );
           const sectionQuestions = sectionEqRows.map((r) => {
             const q = qMap.get(r.questionId)!;
@@ -285,14 +285,8 @@ const questionsRoutes: FastifyPluginAsync = async (app) => {
         })
         .filter((s) => s.questions.length > 0);
 
-      // Find unassigned questions (subject questions not in any exam section for this batch)
-      const assignedQIds = new Set(
-        eqRows
-          .filter((r) => linkedQIds.has(r.questionId))
-          .map((r) => r.questionId),
-      );
-
-      const unassignedQuestions = linkedQuestions
+      // Unassigned: all subject questions NOT in any exam section for this batch
+      const unassignedQuestions = allSubjectQuestions
         .filter((q) => !assignedQIds.has(q.id))
         .map((q) => ({
           ...q,
