@@ -541,6 +541,26 @@ export async function submitAttempt(
   attemptId: string,
   reason: "submitted" | "force_submitted" = "submitted",
 ): Promise<void> {
+  // Check current status — if already submitted, return early (idempotent)
+  const [existing] = await db
+    .select({ status: attempts.status })
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .limit(1);
+
+  if (!existing) {
+    throw new Error("Attempt not found");
+  }
+
+  if (
+    ["submitted", "auto_submitted", "force_submitted", "terminated"].includes(
+      existing.status,
+    )
+  ) {
+    // Already submitted — nothing to do
+    return;
+  }
+
   const now = new Date();
 
   await db

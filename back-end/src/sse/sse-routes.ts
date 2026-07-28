@@ -103,6 +103,7 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
     }
 
     // Find active attempt
+    // Find active or recently submitted attempt
     const [activeAttempt] = await db
       .select({
         id: attempts.id,
@@ -118,6 +119,8 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
             "paused",
             "not_started",
             "terminated",
+            "submitted",
+            "auto_submitted",
             "force_submitted",
           ]),
         ),
@@ -178,6 +181,17 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
         attemptId: activeAttempt.id,
         serverTime: Date.now(),
       });
+    } else if (
+      activeAttempt?.status === "submitted" ||
+      activeAttempt?.status === "auto_submitted" ||
+      activeAttempt?.status === "force_submitted"
+    ) {
+      // Attempt already submitted — notify client immediately
+      sseManager.sendTo(client.id, "session:submitted", {
+        attemptId: activeAttempt.id,
+        reason: activeAttempt.status,
+        serverTime: Date.now(),
+      });
     }
 
     // Keep-alive is handled by the shared SSEManager timer (single timer
@@ -188,11 +202,15 @@ const sseRoutesPlugin: FastifyPluginAsync = async (app) => {
       sseManager.remove(client.id);
 
       // Auto-pause the attempt when the SSE connection drops.
+      // Only pause if the attempt is still in an active state.
       // autoPauseAttempt checks the current DB status (not the captured
       // status from connect time) and only pauses if still in_progress.
-      // It also broadcasts the event via broadcastSessionEvent, so we
-      // don't need to broadcast again here.
-      if (activeAttempt) {
+      if (
+        activeAttempt &&
+        (activeAttempt.status === "in_progress" ||
+          activeAttempt.status === "paused" ||
+          activeAttempt.status === "not_started")
+      ) {
         try {
           await autoPauseAttempt(activeAttempt.id, "SSE connection closed");
         } catch {

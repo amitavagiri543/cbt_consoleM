@@ -290,8 +290,32 @@ export default function CandidateExamPage() {
   }, [storageKey]);
 
   // Apply a pending resume: restore answers, attemptId, timer, and start the exam.
-  const handleResume = () => {
+  const handleResume = async () => {
     if (!pendingResume) return;
+    // Re-validate attempt state before resuming — the attempt may have been
+    // submitted (e.g., auto-submitted by timer) since the resume screen was shown
+    try {
+      const state = await candidateService.getAttemptState(
+        pendingResume.attemptId,
+      );
+      if (
+        state.status === "submitted" ||
+        state.status === "auto_submitted" ||
+        state.status === "force_submitted" ||
+        state.status === "terminated"
+      ) {
+        if (storageKey) {
+          localStorage.removeItem(storageKey);
+          localStorage.removeItem(`${storageKey}_lastQ`);
+        }
+        setPendingResume(null);
+        setExamSubmitted(true);
+        toast.info("This exam has already been submitted.");
+        return;
+      }
+    } catch {
+      // If state check fails, proceed with resume anyway
+    }
     setAnswers(pendingResume.answers);
     setAttemptId(pendingResume.attemptId);
     setRemainingSecs(pendingResume.remainingSecs);
@@ -361,7 +385,20 @@ export default function CandidateExamPage() {
         typeof errData === "string"
           ? errData
           : (errData?.message ?? "Failed to start exam");
-      toast.error(msg);
+      // If exam already submitted, show submitted screen instead of error toast
+      if (
+        typeof msg === "string" &&
+        msg.toLowerCase().includes("already submitted")
+      ) {
+        if (storageKey) {
+          localStorage.removeItem(storageKey);
+          localStorage.removeItem(`${storageKey}_lastQ`);
+        }
+        setExamSubmitted(true);
+        setPendingResume(null);
+      } else {
+        toast.error(msg);
+      }
     },
   });
 
@@ -410,6 +447,11 @@ export default function CandidateExamPage() {
   const handleSubmit = async () => {
     if (!attemptId) return;
     setSubmitting(true);
+    // Close SSE immediately to prevent auto-pause/resume events interfering
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
     try {
       await candidateService.submitExam(attemptId);
       if (storageKey) {
@@ -418,6 +460,9 @@ export default function CandidateExamPage() {
       }
       toast.success("Exam submitted successfully!");
       queryClient.invalidateQueries({ queryKey: ["candidate-exams"] });
+      queryClient.invalidateQueries({
+        queryKey: ["candidate-exam-meta", batchId],
+      });
       setExamSubmitted(true);
     } catch (err: any) {
       const errData = err.response?.data?.error;
@@ -425,7 +470,19 @@ export default function CandidateExamPage() {
         typeof errData === "string"
           ? errData
           : (errData?.message ?? "Submit failed");
-      toast.error(msg);
+      // If the error is "already submitted", the backend processed it — show submitted screen
+      if (
+        typeof msg === "string" &&
+        msg.toLowerCase().includes("already submitted")
+      ) {
+        if (storageKey) {
+          localStorage.removeItem(storageKey);
+          localStorage.removeItem(`${storageKey}_lastQ`);
+        }
+        setExamSubmitted(true);
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setSubmitting(false);
       setShowSubmitDialog(false);
@@ -458,6 +515,11 @@ export default function CandidateExamPage() {
       !timeExpiredRef.current
     ) {
       timeExpiredRef.current = true;
+      // Close SSE to prevent interference
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
       toast.error("Time is up! Auto-submitting your exam...");
       candidateService
         .submitExam(attemptId)
@@ -467,7 +529,10 @@ export default function CandidateExamPage() {
             localStorage.removeItem(`${storageKey}_lastQ`);
           }
           queryClient.invalidateQueries({ queryKey: ["candidate-exams"] });
-          navigate("/exams");
+          queryClient.invalidateQueries({
+            queryKey: ["candidate-exam-meta", batchId],
+          });
+          setExamSubmitted(true);
         })
         .catch(() => {
           // Backend timer will auto-submit anyway
@@ -475,7 +540,10 @@ export default function CandidateExamPage() {
             localStorage.removeItem(storageKey);
             localStorage.removeItem(`${storageKey}_lastQ`);
           }
-          navigate("/exams");
+          queryClient.invalidateQueries({
+            queryKey: ["candidate-exam-meta", batchId],
+          });
+          setExamSubmitted(true);
         });
     }
   }, [remainingSecs, examStarted, attemptId]);
